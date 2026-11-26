@@ -29,6 +29,12 @@
   .event .ed { color: var(--dim); font-size: 12px; margin: 4px 0 8px; }
   .event button { margin-right: 8px; }
 
+  /* 版本自检横幅：检测到线上有新版时显示（防浏览器/运营商缓存旧版） */
+  #updBar { display: none; max-width: 1140px; margin: 10px auto 0; padding: 0 18px; }
+  #updBar.on { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #332a10; border: 1px solid var(--accent2); border-radius: 8px; padding: 10px 12px; }
+  #updBar span { color: var(--accent); font-size: 13px; }
+  #updBar button { flex: 0 0 auto; }
+
   .layout { display: grid; grid-template-columns: 330px 1fr; gap: 14px; padding: 14px 18px; max-width: 1140px; margin: 0 auto; align-items: start; }
   button, input[type=range] { touch-action: manipulation; }
   #makeBtn { user-select: none; -webkit-user-select: none; }
@@ -141,11 +147,16 @@
 
 <div id="eventBar"><div class="event" id="eventBox"></div></div>
 
+<div id="updBar"><span></span><button id="updReload">刷新到新版</button></div>
+
 <div class="layout">
   <div>
     <div class="panel" id="makePanel">
       <button id="makeBtn">制造回形针</button>
       <div class="hint" id="makeHint"></div>
+      <div class="row"><span class="k">自动剪裁机</span><span class="v" id="clipperVal">0</span></div>
+      <button class="act" id="clipperBtn">建造自动剪裁机</button>
+      <div class="hint">自动剪裁机是前期最主要的产量来源：每台 10 资金起步，随数量涨价。资金优先买它，手点只是开局过渡。</div>
     </div>
 
     <div class="panel" id="wirePanel">
@@ -281,7 +292,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v3.1 · 2026-11-26 14:20 构建';
+const VERSION = 'v3.2 · 2026-11-26 15:35 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
 
 function fmt(n) {
@@ -1112,6 +1123,7 @@ $('makeBtn').addEventListener('click', () => {
   }
 });
 $('wireBtn').addEventListener('click', () => { buyWire(S, 1); render(); });
+$('clipperBtn').addEventListener('click', () => { buyClipper(S); render(); });
 $('wire10Btn').addEventListener('click', () => { buyWire(S, 10); render(); });
 $('begBtn').addEventListener('click', () => { if (spendTrust(S, 'begwire')) toast('人类同情了你：+5000 线材'); render(); });
 $('synthBtn').addEventListener('click', () => { buySynth(S); render(); });
@@ -1127,6 +1139,22 @@ $('probeBtn').addEventListener('click', () => { if (launchProbe(S)) toast('探�
 $('workSlider').addEventListener('input', e => { S.workShare = Number(e.target.value) / 100; });
 $('tourBtn').addEventListener('click', () => { if (runTournament(S)) toast('锦标赛结束：yomi +' + (1 + (S.investUpg.includes('u5') ? 2 : 0))); render(); });
 $('qCompileBtn').addEventListener('click', () => { if (runQCompile(S)) toast('量子编译完成：+5,000 ops'); render(); });
+
+/* 版本自检：抓线上最新版本戳对比，防止浏览器/运营商缓存旧版（3 秒后检查一次） */
+setTimeout(() => {
+  fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' })
+    .then(r => r.text())
+    .then(t => {
+      const m = t.match(/VERSION = '([^']+)'/);
+      if (m && m[1] !== VERSION) {
+        $('updBar').classList.add('on');
+        $('updBar').querySelector('span').textContent =
+          '发现新版本 ' + m[1].split(' · ')[0] + '（当前运行 ' + VERSION.split(' · ')[0] + '），存档不受影响';
+      }
+    })
+    .catch(() => {});
+}, 3000);
+$('updReload').addEventListener('click', () => { save(); location.replace(location.pathname + '?v=' + Date.now()); });
 
 /* 事件横幅 */
 function renderEvent() {
@@ -1370,6 +1398,12 @@ function render() {
     if (S.phase >= 2) parts.push(`供电率 ${(powerFactor(S) * 100).toFixed(0)}%`);
     $('makeHint').textContent = parts.join(' · ');
   }
+
+  // 自动剪裁机（前期主力产量：资金优先买它）
+  const cc = clipperCost(S);
+  $('clipperVal').textContent = fmt(S.clippers) + '（产出 ' + fmt(S.clippers * S.clipMult * (S.cpuBoost ? 1 + S.processors * 0.05 : 1) * S.prestigeMult) + ' /s）';
+  $('clipperBtn').textContent = `建造自动剪裁机（${fmt(cc)} 资金）`;
+  $('clipperBtn').disabled = S.funds < cc;
 
   $('opsVal').textContent = fmt(S.ops) + ' / ' + fmt(5000 + S.memory * 10000);
   $('cpuVal').textContent = S.processors + ' / ' + S.memory;
