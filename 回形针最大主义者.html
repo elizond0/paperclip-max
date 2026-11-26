@@ -304,7 +304,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v3.5 · 2026-11-26 16:15 构建';
+const VERSION = 'v3.6 · 2026-11-26 16:25 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
 
 function fmt(n) {
@@ -632,7 +632,8 @@ const EVENTS = [
     ] },
 ];
 function spawnEvent(s) {
-  const pool = EVENTS.filter(e => e.phase <= s.phase);
+  const pool = EVENTS.filter(e => e.phase === s.phase); // 只抽当前阶段的事件
+  if (!pool.length) pool.push(EVENTS[0]);
   s.activeEvent = pool[Math.floor(Math.random() * pool.length)];
 }
 function chooseEvent(s, idx) {
@@ -1196,19 +1197,33 @@ setTimeout(() => {
 }, 3000);
 $('updReload').addEventListener('click', () => { save(); location.replace(location.pathname + '?v=' + Date.now()); });
 
-/* 事件横幅 */
+/* 事件横幅（只在事件内容变化时重建 DOM；点击走事件委托，避免 100ms 重渲染吞掉点击） */
+let evRenderKey = '';
 function renderEvent() {
   const bar = $('eventBar');
-  if (!S.activeEvent) { bar.classList.remove('on'); return; }
+  if (!S.activeEvent) {
+    bar.classList.remove('on');
+    evRenderKey = '';
+    return;
+  }
   const e = S.activeEvent;
   bar.classList.add('on');
+  const key = e.id + '|' + S.phase;
+  if (key === evRenderKey) return; // 同一事件未变，不重建
+  evRenderKey = key;
   $('eventBox').innerHTML =
     `<div class="et">⚠ 事件：${e.title}</div>
      <div class="ed">${e.desc}</div>
      ${e.opts.map((o, i) => `<button class="act ev" data-i="${i}">${typeof o.label === 'function' ? o.label(S) : o.label}</button>`).join('')}`;
-  $('eventBox').querySelectorAll('button').forEach(b =>
-    b.addEventListener('click', () => { chooseEvent(S, Number(b.dataset.i)); renderEvent(); render(); }));
 }
+// 事件委托：监听挂在静态容器上，innerHTML 重建不影响
+$('eventBox').addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-i]');
+  if (!b) return;
+  chooseEvent(S, Number(b.dataset.i));
+  renderEvent();
+  render();
+});
 
 /* 选项卡 */
 const TABS = [
