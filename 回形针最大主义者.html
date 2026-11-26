@@ -344,7 +344,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v3.8 · 2026-11-26 22:40 构建';
+const VERSION = 'v3.9 · 2026-11-26 23:25 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 function fmt(n) {
@@ -803,7 +803,7 @@ const PROJECTS = [
     cond: s => moneyOf(s) >= 40000, effect: s => { s.mkt += 2; } },
   { id: 'p10', phase: 1, name: '量子剪裁算法', desc: '剪裁机产出 ×4。', trust: 3, ops: 15000, condText: '信任累计 ≥ 15 且累计制造 200,000',
     cond: s => s.trustEver >= 15 && s.totalClips >= 200000, effect: s => { s.clipMult *= 4; } },
-  { id: 'p11', phase: 1, name: '超级智能计划', desc: '构建超级智能，它将接管资金并投入金融市场。解锁投资阶段。', trust: 2, ops: 20000, condText: '累计制造 500,000 回形针',
+  { id: 'p11', phase: 1, name: '超级智能计划', desc: '构建超级智能，它将接管资金并投入金融市场。解锁投资阶段。', trust: 2, ops: 20000, condText: '累计制造 500,000 回形针', pin: true,
     cond: s => s.totalClips >= 500000, effect: s => { s.phase = 2; s.capital += s.funds; s.funds = 0; } },
   // —— 阶段二：投资 / 工业 ——
   { id: 's1', phase: 2, name: '投资组合理论', desc: '解锁风险档位的基础收益 2%/s（低风险）。', ops: 18000, condText: '进入投资阶段',
@@ -834,7 +834,7 @@ const PROJECTS = [
   { id: 'pw3', phase: 2, name: '电池超导层', desc: '充放电效率 +40%、电池容量 ×2（加速「太空探索计划」的电池累计门槛）。', ops: 60000,
     cond: s => s.powerUnlocked, condText: '解锁自主电网',
     effect: s => { s.battCapMult = 2; } },
-  { id: 's5', phase: 2, name: '太空探索计划', desc: '研究消耗 120k 操作点、电池组累计 1000 万 MWs、100 万亿回形针。解锁太空阶段。', ops: 120000, clips: 1e14, condText: '电池组累计充入 1,000 万 MWs',
+  { id: 's5', phase: 2, name: '太空探索计划', desc: '研究消耗 120k 操作点、电池组累计 1000 万 MWs、100 万亿回形针。解锁太空阶段。', ops: 120000, clips: 1e14, condText: '电池组累计充入 1,000 万 MWs', pin: true,
     cond: s => s.mwBanked >= 1e7, effect: s => { s.phase = 3; } },
   // —— 阶段三：太空 ——
   { id: 't1', phase: 3, name: '自复制协议', desc: '复制速率基础值 0.06%/s → 0.12%/s。', ops: 50000, condText: '探测器 ≥ 50',
@@ -1607,14 +1607,20 @@ function goalProgress(p) {
   return rows;
 }
 function renderGoals() {
-  const goals = PROJECTS.filter(p => p.phase <= S.phase && !S.projectsDone.includes(p.id) && !p.cond(S)).slice(0, 3);
+  const cand = PROJECTS.filter(p => p.phase <= S.phase && !S.projectsDone.includes(p.id) && !p.cond(S));
   const box = $('goalBox');
-  if (!goals.length) { box.innerHTML = ''; return; }
-  setHTML(box, '<div class="hint"><b>即将解锁：</b></div>' + goals.map(p => {
+  if (!cand.length) { setHTML(box, ''); return; }
+  // 排序：主线（改阶段的 pin 项）恒占首位，其次是当前阶段项目按「完成度」降序。
+  // 旧阶段遗留的未解锁小项目不再挤占前 3，否则 P2 最关键的「电池累计」瓶颈永远看不见。
+  const scored = cand.map(p => {
     const rows = goalProgress(p);
+    const prog = rows.length ? Math.max(...rows.map(r => Math.min(1, r.cur / r.max))) : 0;
+    return { p, rows, prog };
+  }).sort((a, b) => (b.p.pin ? 1 : 0) - (a.p.pin ? 1 : 0) || (b.p.phase - a.p.phase) || (b.prog - a.prog)).slice(0, 3);
+  setHTML(box, '<div class="hint"><b>即将解锁：</b></div>' + scored.map(({ p, rows }) => {
     const detail = rows.map(r => {
       const pct = Math.min(100, r.cur / r.max * 100);
-      const eta = r.rate && r.rate > 0 ? fmtEta((r.max - r.cur) / r.rate) : '';
+      const eta = r.rate && isFinite(r.rate) && r.rate > 0 ? fmtEta((r.max - r.cur) / r.rate) : '';
       return `<div class="gbar"><span>${r.label} ${fmt(Math.min(r.cur, r.max))} / ${fmt(r.max)}${eta ? ' · 约 ' + eta : ''}</span>`
         + `<i style="width:${pct.toFixed(1)}%"></i></div>`;
     }).join('');
