@@ -229,6 +229,7 @@
       <div class="tabpane" id="pane-invest">
         <h2>投资</h2>
         <div class="row"><span class="k">资本</span><span class="v" id="capVal"></span></div>
+        <div class="hint">资金与资本：阶段一赚的是「资金」；执行「超级智能计划」进入投资阶段时，资金全部并入「资本」，此后所有收入（销售、投资收益）都进资本，购买也统一从资本支出——两个数字不会同时流通。</div>
         <div class="row"><span class="k">风险档位</span><span class="v" id="riskVal">—</span></div>
         <div class="btnrow" id="riskBtns"></div>
         <div class="row"><span class="k">收益率</span><span class="v" id="rateVal"></span></div>
@@ -303,7 +304,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v3.4 · 2026-11-26 16:00 构建';
+const VERSION = 'v3.5 · 2026-11-26 16:15 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
 
 function fmt(n) {
@@ -376,6 +377,13 @@ function demandOf(s) {
   if (s.phase >= 2 && !s.rivalGone) d *= (1 - s.rivalShare);
   return d;
 }
+/* ---- 货币统一：阶段一用「资金」，阶段二起「资本」接管（p11 超级智能计划把资金并入资本） ---- */
+function moneyOf(s) { return s.phase >= 2 ? s.capital : s.funds; }
+function payMoney(s, amt, dry) {
+  if (s.phase >= 2) { if (s.capital < amt) return false; if (!dry) s.capital -= amt; return true; }
+  if (s.funds < amt) return false; if (!dry) s.funds -= amt; return true;
+}
+function gainMoney(s, amt) { if (s.phase >= 2) s.capital += amt; else s.funds += amt; }
 function clipperCost(s) { return 10 * Math.pow(s.clipperGrowth, s.clippers); }
 function mktCost(s) { return 100 * Math.pow(1.8, s.mkt - 1); }
 function synthCost(s) { return 5000 * Math.pow(1.25, s.synthCostN); }
@@ -554,12 +562,12 @@ function manualMake(s) {
 const EVENTS = [
   { id: 'e1', phase: 1, title: '大客户订单', desc: '一家办公用品连锁想以 1.5 倍价格一次性买断 500 个库存。',
     opts: [
-      { label: '接单', fx: s => { const n = Math.min(s.clips, 500); s.clips -= n; s.funds += n * s.price * 1.5; }, log: '订单完成，货款到账。' },
+      { label: '接单', fx: s => { const n = Math.min(s.clips, 500); s.clips -= n; gainMoney(s, n * s.price * 1.5); }, log: '订单完成，货款到账。' },
       { label: '婉拒', fx: () => {}, log: '你礼貌地拒绝了。' },
     ] },
   { id: 'e2', phase: 1, title: '设备故障', desc: '一台剪裁机的主轴过热。',
     opts: [
-      { label: '花 200 资金维修', fx: s => { s.funds = Math.max(0, s.funds - 200); }, log: '修好了，生产继续。' },
+      { label: s => `花 200 ${s.phase >= 2 ? '资本' : '资金'}维修`, fx: s => { payMoney(s, 200); }, log: '修好了，生产继续。' },
       { label: '报废', fx: s => { if (s.clippers > 0) s.clippers -= 1; }, log: '报废了一台剪裁机。' },
     ] },
   { id: 'e3', phase: 1, title: '神秘访客', desc: '一位评估师参观了工厂，对你的效率印象深刻。',
@@ -575,12 +583,12 @@ const EVENTS = [
   { id: 'e5', phase: 1, title: '员工联名信', desc: '工人们要求每小时休息十分钟。',
     opts: [
       { label: '批准（+1 信任）', fx: s => { s.trust += 1; }, log: '士气高涨。' },
-      { label: '拒绝（+800 资金）', fx: s => { s.funds += 800; }, log: '加班费已发：资金 +800。' },
+      { label: s => `拒绝（+800 ${s.phase >= 2 ? '资本' : '资金'}）`, fx: s => { gainMoney(s, 800); }, log: '加班费已发。' },
     ] },
   { id: 'e12', phase: 1, title: '专利纠纷', desc: '竞争对手起诉你的剪裁机侵权。',
     opts: [
-      { label: '和解（-1000 资金）', fx: s => { s.funds = Math.max(0, s.funds - 1000); }, log: '破财免灾。' },
-      { label: '应诉（50% 胜诉 +2000 / 败诉 -2 台剪裁机）', fx: s => { if (Math.random() < 0.5) { s.funds += 2000; pushLog(s, '胜诉！获赔 2000 资金。'); } else { s.clippers = Math.max(0, s.clippers - 2); pushLog(s, '败诉，赔了两台剪裁机。'); } }, log: '诉讼终结。' },
+      { label: s => `和解（-1000 ${s.phase >= 2 ? '资本' : '资金'}）`, fx: s => { payMoney(s, 1000); }, log: '破财免灾。' },
+      { label: s => `应诉（50% 胜诉 +2000 / 败诉 -2 台剪裁机）`, fx: s => { if (Math.random() < 0.5) { gainMoney(s, 2000); pushLog(s, '胜诉！获赔 2000。'); } else { s.clippers = Math.max(0, s.clippers - 2); pushLog(s, '败诉，赔了两台剪裁机。'); } }, log: '诉讼终结。' },
     ] },
   { id: 'e6', phase: 2, title: '做空风波', desc: '有基金在做空你的股票。',
     opts: [
@@ -695,7 +703,7 @@ const PROJECTS = [
   { id: 'pO1', phase: 1, name: '统计运算优化', desc: '处理器操作点产出 ×2。', trust: 1, ops: 800, condText: '拥有 2 个处理器',
     cond: s => s.processors >= 2, effect: s => { s.cpuMult *= 2; } },
   { id: 'p5', phase: 1, name: '品牌营销部', desc: '营销等级 +2。', trust: 2, ops: 1500, condText: '资金 ≥ 1,500',
-    cond: s => s.funds >= 1500, effect: s => { s.mkt += 2; } },
+    cond: s => moneyOf(s) >= 1500, effect: s => { s.mkt += 2; } },
   { id: 'x1', phase: 1, name: '关键一击训练', desc: '手工制造有 8% 概率暴击：一次 ×10。', trust: 1, condText: '累计手工点击 100 次',
     cond: s => s.totalClicks >= 100, effect: s => { s.critChance = Math.max(s.critChance, 0.08); } },
   { id: 'x2', phase: 1, name: '精益库存', desc: '市场需求 +25%。', trust: 1, ops: 2500, condText: '累计制造 10,000 回形针',
@@ -715,9 +723,9 @@ const PROJECTS = [
   { id: 'p8', phase: 1, name: '超导线材', desc: '剪裁机产出 ×3。', trust: 2, ops: 8000, condText: '累计制造 80,000 回形针',
     cond: s => s.totalClips >= 80000, effect: s => { s.clipMult *= 3; } },
   { id: 'p9', phase: 1, name: '统计自适应定价', desc: '营销等级 +3。', trust: 2, ops: 10000, condText: '资金 ≥ 15,000',
-    cond: s => s.funds >= 15000, effect: s => { s.mkt += 3; } },
+    cond: s => moneyOf(s) >= 15000, effect: s => { s.mkt += 3; } },
   { id: 'x4', phase: 1, name: '华尔街之狼', desc: '营销等级 +2。', trust: 2, ops: 12000, condText: '资金 ≥ 40,000',
-    cond: s => s.funds >= 40000, effect: s => { s.mkt += 2; } },
+    cond: s => moneyOf(s) >= 40000, effect: s => { s.mkt += 2; } },
   { id: 'p10', phase: 1, name: '量子剪裁算法', desc: '剪裁机产出 ×4。', trust: 3, ops: 15000, condText: '信任累计 ≥ 15 且累计制造 200,000',
     cond: s => s.trustEver >= 15 && s.totalClips >= 200000, effect: s => { s.clipMult *= 4; } },
   { id: 'p11', phase: 1, name: '超级智能计划', desc: '构建超级智能，它将接管资金并投入金融市场。解锁投资阶段。', trust: 2, ops: 20000, condText: '累计制造 500,000 回形针',
@@ -794,13 +802,13 @@ function runProject(s, id) {
 function buyWire(s, batches) {
   const unit = wirePriceOf(s);
   const total = unit * batches;
-  if (s.funds < total) return false;
-  s.funds -= total; s.wire += 1000 * batches; s.wireBought += batches;
+  if (!payMoney(s, total)) return false;
+  s.wire += 1000 * batches; s.wireBought += batches;
   return true;
 }
-function buyClipper(s) { const c = clipperCost(s); if (s.funds < c) return false; s.funds -= c; s.clippers += 1; return true; }
-function buyMkt(s) { const c = mktCost(s); if (s.mkt >= 12 || s.funds < c) return false; s.funds -= c; s.mkt += 1; return true; }
-function buySynth(s) { const c = synthCost(s); if (!s.synthUnlocked || s.funds < c) return false; s.funds -= c; s.synths += 1; s.synthCostN += 1; return true; }
+function buyClipper(s) { const c = clipperCost(s); return payMoney(s, c) ? (s.clippers += 1, true) : false; }
+function buyMkt(s) { const c = mktCost(s); if (s.mkt >= 12 || !payMoney(s, c)) return false; s.mkt += 1; return true; }
+function buySynth(s) { const c = synthCost(s); if (!s.synthUnlocked || !payMoney(s, c)) return false; s.synths += 1; s.synthCostN += 1; return true; }
 function buyMega(s) { const c = megaCost(s); if (s.capital < c) return false; s.capital -= c; s.megas += 1; s.megaCostN += 1; return true; }
 function buySolar(s) { const c = solarCost(s); if (!s.powerUnlocked || s.capital < c) return false; s.capital -= c; s.solarFarms += 1; s.solarCostN += 1; return true; }
 function buyBattery(s) { const c = batteryCost(s); if (!s.powerUnlocked || s.capital < c) return false; s.capital -= c; s.batteries += 1; s.battCostN += 1; return true; }
@@ -844,21 +852,21 @@ function tick(s, dt) {
   // 2. 自动购线（只在低价位买，且保留运营资金；可手动关闭）
   if (s.autoWire && s.autoWirePref !== false && s.wire < 200) {
     const wp = wirePriceOf(s);
-    if (wp <= 13 * s.wireMult && s.funds >= wp * 3) buyWire(s, 1);
+    if (wp <= 13 * s.wireMult && moneyOf(s) >= wp * 3) buyWire(s, 1);
   }
   // 2b. 应急变现兜底：资金、线材、库存三空时防止永久卡死
-  if (s.funds < 1 && s.wire < 1 && s.clips < 1) {
-    s.funds += 2 * dt;
+  if (moneyOf(s) < 1 && s.wire < 1 && s.clips < 1) {
+    gainMoney(s, 2 * dt);
     if (!s.bailoutOnce) { s.bailoutOnce = true; }
-  } else if (s.funds > 50 || s.wire > 10 || s.clips > 10) {
+  } else if (moneyOf(s) > 50 || s.wire > 10 || s.clips > 10) {
     s.bailoutOnce = false;
   }
 
-  // 3. 合成器产线材（耗资金）
+  // 3. 合成器产线材（耗资金；阶段二起由资本支付）
   if (s.synths > 0) {
     const need = s.synths * 2 * dt;
-    const eff = s.funds >= need ? 1 : s.funds / Math.max(need, 1e-9);
-    s.funds = Math.max(0, s.funds - need * eff);
+    const eff = moneyOf(s) >= need ? 1 : moneyOf(s) / Math.max(need, 1e-9);
+    payMoney(s, need * eff);
     s.wire += s.synths * 200 * dt * eff;
   }
 
@@ -910,7 +918,7 @@ function tick(s, dt) {
   // 7. 销售
   const sold = Math.min(s.clips, demandOf(s) * dt);
   s.clips -= sold;
-  s.funds += sold * s.price;
+  gainMoney(s, sold * s.price);
   s.totalSold += sold;
 
   // 8. 投资（阶段 ≥2）
@@ -1032,7 +1040,7 @@ function offlineProgress(s, sec) {
   s.totalClips += Math.max(0, produced);
   const sold = Math.min(s.clips + Math.max(0, produced), demandOf(s) * sec * 0.5);
   s.clips = s.clips + Math.max(0, produced) - sold;
-  s.funds += sold * s.price;
+  gainMoney(s, sold * s.price);
   s.totalSold += sold;
   if (s.investEngine) s.capital *= Math.pow(Math.max(0.1, 1 + investRate(s) * 0.5), Math.min(sec, 3600));
   pushLog(s, '离线收益：离线 ' + Math.round(sec / 60) + ' 分钟，结算 ' + fmt(Math.max(0, produced)) + ' 个回形针、' + fmt(sold * s.price) + ' 资金（50% 效率）。', 'hi');
@@ -1077,7 +1085,7 @@ function toast(msg) {
 const STAT_DEFS = [
   ['回形针总数', s => fmt(s.totalClips)],
   ['库存', s => fmt(s.clips)],
-  ['资金', s => fmt(s.funds)],
+  ['资金', s => s.phase >= 2 ? '已并入资本' : fmt(s.funds)],
   ['资本', s => s.phase >= 2 ? fmt(s.capital) : '—'],
   ['信任', s => String(s.trust)],
   ['阶段', s => ['', '制造', '投资', '太空'][s.phase] + (s.runs ? ' · 轮回' + s.runs : '')],
@@ -1091,12 +1099,14 @@ function renderStats() {
 const TRUST_ORDER = ['processor', 'memory', 'creativity', 'quantum', 'photonic', 'qauto', 'overclock', 'hands'];
 function renderTrustSpend() {
   const box = $('trustSpendBox');
-  box.innerHTML = TRUST_ORDER.map(k => {
+  // 已满的放最后并置灰，可购买的排前面
+  const order = TRUST_ORDER.slice().sort((x, y) => (TRUST_ACTIONS[x].max(S) ? 1 : 0) - (TRUST_ACTIONS[y].max(S) ? 1 : 0));
+  box.innerHTML = order.map(k => {
     const a = TRUST_ACTIONS[k];
     const maxed = a.max(S);
     const locked = (k === 'photonic' && !S.quantumOn) || (k === 'qauto' && !S.quantumOn) || (k === 'creativity' && S.processors < 1) || (k === 'quantum' && !S.creativityOn);
     const c = a.cost(S);
-    return `<div class="row"><span class="k">${a.name} · ${a.desc}</span>
+    return `<div class="row" ${maxed ? 'style="opacity:.45;"' : ''}><span class="k">${a.name} · ${a.desc}</span>
       <button class="act" data-tk="${k}" ${maxed || locked || S.trust < c ? 'disabled' : ''}>${maxed ? '已满' : c + ' 信任'}</button></div>`;
   }).join('');
   box.querySelectorAll('button[data-tk]').forEach(b =>
@@ -1195,7 +1205,7 @@ function renderEvent() {
   $('eventBox').innerHTML =
     `<div class="et">⚠ 事件：${e.title}</div>
      <div class="ed">${e.desc}</div>
-     ${e.opts.map((o, i) => `<button class="act ev" data-i="${i}">${o.label}</button>`).join('')}`;
+     ${e.opts.map((o, i) => `<button class="act ev" data-i="${i}">${typeof o.label === 'function' ? o.label(S) : o.label}</button>`).join('')}`;
   $('eventBox').querySelectorAll('button').forEach(b =>
     b.addEventListener('click', () => { chooseEvent(S, Number(b.dataset.i)); renderEvent(); render(); }));
 }
@@ -1223,7 +1233,10 @@ function renderTabs() {
 
 /* 项目渲染 */
 function visibleProjects() {
-  return PROJECTS.filter(p => p.phase <= S.phase && !S.projectsDone.includes(p.id) && p.cond(S));
+  // 本阶段项目排前，遗留的旧阶段项目排末尾（置灰显示）
+  return PROJECTS
+    .filter(p => p.phase <= S.phase && !S.projectsDone.includes(p.id) && p.cond(S))
+    .sort((a, b) => (a.phase === S.phase ? 0 : 1) - (b.phase === S.phase ? 0 : 1) || a.phase - b.phase);
 }
 function costText(p) {
   const parts = [];
@@ -1243,8 +1256,9 @@ function renderProjects(listEl, ps) {
       const pool = p.pool === 'capital' ? S.capital : S.funds;
       if (pool < p.cost(S)) can = false;
     }
-    return `<div class="proj">
-      <div class="pname">${p.name}${p.repeatable ? ' ×' + S.megaCostN : ''}</div>
+    const stale = p.phase < S.phase;
+    return `<div class="proj" ${stale ? 'style="opacity:.5;"' : ''}>
+      <div class="pname">${p.name}${p.repeatable ? ' ×' + S.megaCostN : ''}${stale ? '（前阶段遗留）' : ''}</div>
       <div class="pdesc">${p.desc}</div>
       <div class="pmeta">${costText(p)} ${p.trust ? ' · 信任 +' + p.trust : ''}
         <button class="act" data-p="${p.id}" ${can ? '' : 'disabled'}>执行</button></div>
@@ -1390,14 +1404,14 @@ function render() {
   awb.textContent = S.autoWirePref !== false ? '自动采购：开' : '自动采购：关';
   awb.style.borderColor = S.autoWirePref !== false ? 'var(--accent)' : '';
   awb.style.color = S.autoWirePref !== false ? 'var(--accent)' : 'var(--dim)';
-  $('wireBtn').textContent = `购买 ×1000（${fmt(wp)} 资金）`;
-  $('wireBtn').disabled = S.funds < wp;
+  $('wireBtn').textContent = `购买 ×1000（${fmt(wp)} ${S.phase >= 2 ? '资本' : '资金'}）`;
+  $('wireBtn').disabled = !payMoney(S, wp, true);
   $('wire10Btn').textContent = `×10 组（${fmt(wp * 10)}）`;
-  $('wire10Btn').disabled = S.funds < wp * 10;
+  $('wire10Btn').disabled = !payMoney(S, wp * 10, true);
   $('synthVal').textContent = S.synthUnlocked ? fmt(S.synths) + '（' + fmt(synthWireRate(S)) + ' 线材/s）' : '未解锁';
   const sc = synthCost(S);
-  $('synthBtn').textContent = `建造合成器（${fmt(sc)} 资金）`;
-  $('synthBtn').disabled = !S.synthUnlocked || S.funds < sc;
+  $('synthBtn').textContent = `建造合成器（${fmt(sc)} ${S.phase >= 2 ? '资本' : '资金'}）`;
+  $('synthBtn').disabled = !S.synthUnlocked || !payMoney(S, sc, true);
   $('synthHint').textContent = S.synthUnlocked ? '' :
     `🔒 解锁途径：项目「线材合成器原型」— 累计制造 50,000 回形针（进度 ${fmt(Math.min(S.totalClips, 50000))} / 50.00 K），项目还需 2 信任 + 5,000 ops。`;
 
@@ -1431,8 +1445,8 @@ function render() {
     : '';
   $('rivalVal').textContent = S.phase >= 2 ? (S.rivalGone ? '已买断' : (S.rivalShare * 100).toFixed(1) + '%') : '—';
   const mc = mktCost(S);
-  $('mktBtn').textContent = `升级营销（${fmt(mc)} 资金）`;
-  $('mktBtn').disabled = S.mkt >= 12 || S.funds < mc;
+  $('mktBtn').textContent = `升级营销（${fmt(mc)} ${S.phase >= 2 ? '资本' : '资金'}）`;
+  $('mktBtn').disabled = S.mkt >= 12 || !payMoney(S, mc, true);
   if (S.wire < 1) {
     $('makeHint').textContent = '⚠ 线材不足，无法制造';
   } else {
@@ -1448,8 +1462,8 @@ function render() {
   // 自动剪裁机（前期主力产量：资金优先买它）
   const cc = clipperCost(S);
   $('clipperVal').textContent = fmt(S.clippers) + '（产出 ' + fmt(S.clippers * S.clipMult * (S.cpuBoost ? 1 + S.processors * 0.05 : 1) * S.prestigeMult) + ' /s）';
-  $('clipperBtn').textContent = `建造自动剪裁机（${fmt(cc)} 资金）`;
-  $('clipperBtn').disabled = S.funds < cc;
+  $('clipperBtn').textContent = `建造自动剪裁机（${fmt(cc)} ${S.phase >= 2 ? '资本' : '资金'}）`;
+  $('clipperBtn').disabled = !payMoney(S, cc, true);
 
   $('opsVal').textContent = fmt(S.ops) + ' / ' + fmt(5000 + S.memory * 10000);
   $('cpuVal').textContent = S.processors + ' / ' + S.memory;
