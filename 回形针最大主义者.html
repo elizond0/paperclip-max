@@ -1,0 +1,1474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>回形针最大主义者 · Paperclip Maximizer</title>
+<style>
+  :root {
+    --bg: #101014; --panel: #1a1a21; --panel2: #22222b; --line: #33333f;
+    --text: #d8d8e0; --dim: #8a8a99; --accent: #ffb000; --accent2: #ff7a00;
+    --good: #6fdc8c; --bad: #ff6b6b;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Noto Sans Mono CJK SC", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 14px; line-height: 1.5; min-height: 100dvh; }
+  header { padding: 14px 18px 6px; max-width: 1140px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0; color: var(--accent); letter-spacing: 1px; }
+  header .sub { color: var(--dim); font-size: 12px; margin-top: 2px; }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 8px 18px; border-bottom: 1px solid var(--line); max-width: 1140px; margin: 0 auto; }
+  .stats .st { font-size: 12px; color: var(--dim); }
+  .stats .st b { color: var(--text); font-weight: 600; margin-left: 4px; }
+
+  #eventBar { max-width: 1140px; margin: 10px auto 0; padding: 0 18px; display: none; }
+  #eventBar.on { display: block; }
+  .event { background: #2a2410; border: 1px solid var(--accent2); border-radius: 8px; padding: 10px 12px; }
+  .event .et { color: var(--accent); font-weight: 700; font-size: 13px; }
+  .event .ed { color: var(--dim); font-size: 12px; margin: 4px 0 8px; }
+  .event button { margin-right: 8px; }
+
+  .layout { display: grid; grid-template-columns: 330px 1fr; gap: 14px; padding: 14px 18px; max-width: 1140px; margin: 0 auto; align-items: start; }
+  button, input[type=range] { touch-action: manipulation; }
+  #makeBtn { user-select: none; -webkit-user-select: none; }
+  body { -webkit-tap-highlight-color: transparent; }
+
+  /* 移动端：单列重排（制造按钮 → 主面板 → 资源面板 → 存档），加大触控目标 */
+  @media (max-width: 800px) {
+    .layout { display: flex; flex-direction: column; padding: 10px 12px; gap: 0; }
+    .layout > div { display: contents; }
+    .panel { order: 5; }
+    #makePanel { order: 0; }
+    .layout > div:last-child > .panel { order: 1; }
+    #wirePanel { order: 2; }
+    #mktPanel { order: 3; }
+    #compPanel { order: 4; }
+    #savePanel { order: 9; }
+    header { padding: 12px 12px 4px; }
+    .stats { padding: 8px 12px; gap: 4px 14px; }
+    button.act { padding: 10px 14px; font-size: 13px; min-height: 42px; }
+    #makeBtn { padding: 32px 10px; font-size: 22px; }
+    input[type=range] { width: 100%; height: 30px; }
+    .qgrid { grid-template-columns: repeat(4, 56px); }
+    .qgrid button { width: 56px; height: 56px; font-size: 20px; }
+    .tabs { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
+    .tabs button { flex: 0 0 auto; padding: 10px 16px; font-size: 14px; min-height: 42px; }
+    #logBox { height: 180px; }
+    .ach { grid-template-columns: 1fr; }
+    #eventBar { padding: 0 12px; }
+    .toast { left: 16px; right: 16px; text-align: center; }
+  }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  .panel h2 { font-size: 13px; color: var(--accent); margin: 0 0 10px; letter-spacing: 1px; }
+  .panel + .panel { margin-top: 14px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }
+  .row .k { color: var(--dim); font-size: 12px; }
+  .row .v { font-weight: 600; }
+
+  #makeBtn {
+    width: 100%; padding: 24px 10px; font-size: 20px; font-weight: 700;
+    background: linear-gradient(180deg, #2a2a35, #1d1d26); color: var(--accent);
+    border: 2px solid var(--accent2); border-radius: 10px; cursor: pointer;
+    font-family: var(--mono); letter-spacing: 2px; transition: transform 0.05s ease;
+  }
+  #makeBtn:hover { background: #2e2e3a; }
+  #makeBtn:active { transform: scale(0.97); }
+
+  button.act {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 12px; cursor: pointer; font-family: var(--mono); font-size: 12px;
+  }
+  button.act:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button.act:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.act.ev { background: #2e2a18; border-color: var(--accent2); }
+  input[type=range] { width: 130px; accent-color: var(--accent); }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .tabs button {
+    background: var(--panel); color: var(--dim); border: 1px solid var(--line);
+    border-radius: 6px 6px 0 0; padding: 6px 14px; cursor: pointer; font-family: var(--mono); font-size: 13px;
+  }
+  .tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 700; }
+  .tabpane { display: none; }
+  .tabpane.on { display: block; }
+
+  .proj { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .proj .pname { color: var(--accent); font-weight: 700; font-size: 13px; }
+  .proj .pdesc { color: var(--dim); font-size: 12px; margin: 4px 0; }
+  .proj .pmeta { font-size: 12px; color: var(--good); }
+
+  /* 量子计算网格 */
+  .qgrid { display: grid; grid-template-columns: repeat(4, 44px); gap: 6px; margin: 8px 0; }
+  .qgrid button { width: 44px; height: 44px; border-radius: 6px; border: 1px solid var(--line); background: #0c0c10; cursor: pointer; font-size: 18px; font-family: var(--mono); }
+  .qgrid button.up { background: #3a2e10; border-color: var(--accent); color: var(--accent); }
+  .qgrid button.down { color: #3a3a46; cursor: default; }
+
+  .ach { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+  .ach .a { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+  .ach .a.got { border-color: var(--accent); }
+  .ach .a .an { color: var(--accent); font-weight: 700; }
+  .ach .a.locked { opacity: 0.45; }
+
+  #logBox { background: #0c0c10; border: 1px solid var(--line); border-radius: 8px; padding: 10px; height: 220px; overflow-y: auto; font-size: 12px; }
+  #logBox p { margin: 2px 0; color: var(--dim); }
+  #logBox p.hi { color: var(--accent); }
+  #logBox p.ach { color: var(--good); }
+
+  textarea { width: 100%; min-height: 70px; background: #0c0c10; color: var(--text); border: 1px solid var(--line); border-radius: 6px; font-family: var(--mono); font-size: 11px; padding: 6px; }
+  .toast { position: fixed; right: 16px; bottom: 16px; z-index: 20; background: #2a2410; border: 1px solid var(--accent); color: var(--accent); padding: 10px 14px; border-radius: 8px; font-size: 13px; font-weight: 700; opacity: 0; transition: opacity 0.3s ease; pointer-events: none; }
+  .toast.on { opacity: 1; }
+
+  #ending { position: fixed; inset: 0; background: rgba(6,6,10,0.96); display: none; align-items: center; justify-content: center; z-index: 10; padding: 20px; }
+  #ending.on { display: flex; }
+  #ending .box { max-width: 600px; text-align: center; }
+  #ending h2 { color: var(--accent); font-size: 22px; letter-spacing: 2px; }
+  #ending p { color: var(--dim); white-space: pre-line; text-align: left; }
+
+  footer { text-align: center; color: var(--dim); font-size: 11px; padding: 16px 0 20px; }
+  .hint { color: var(--dim); font-size: 12px; margin-top: 8px; }
+  .btnrow { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>回形针最大主义者</h1>
+  <div class="sub">你的唯一目标：制造尽可能多的回形针。本地自动存档 · 支持离线收益 · 无广告。</div>
+</header>
+
+<div class="stats" id="statsBar"></div>
+
+<div id="eventBar"><div class="event" id="eventBox"></div></div>
+
+<div class="layout">
+  <div>
+    <div class="panel" id="makePanel">
+      <button id="makeBtn">制造回形针</button>
+      <div class="hint" id="makeHint"></div>
+    </div>
+
+    <div class="panel" id="wirePanel">
+      <h2>线材</h2>
+      <div class="row"><span class="k">库存</span><span class="v" id="wireVal">0</span></div>
+      <div class="row"><span class="k">现价 / 千单位</span><span class="v" id="wirePriceVal"></span></div>
+      <div class="btnrow">
+        <button class="act" id="wireBtn">购买 ×1000</button>
+        <button class="act" id="wire10Btn">×10 组</button>
+        <button class="act" id="begBtn">乞求线材（信任）</button>
+      </div>
+      <div class="row" style="margin-top:6px;"><span class="k">合成器</span><span class="v" id="synthVal">0</span></div>
+      <button class="act" id="synthBtn">建造合成器</button>
+      <div class="hint" id="synthHint"></div>
+    </div>
+
+    <div class="panel" id="mktPanel">
+      <h2>市场</h2>
+      <div class="row"><span class="k">售价</span><span class="v" id="priceVal"></span></div>
+      <input type="range" id="priceSlider" min="1" max="200" value="25">
+      <div class="row"><span class="k">营销等级</span><span class="v" id="mktVal"></span></div>
+      <div class="row"><span class="k">预计销量</span><span class="v" id="demandVal"></span></div>
+      <div class="row"><span class="k">对手份额</span><span class="v" id="rivalVal">—</span></div>
+      <button class="act" id="mktBtn">升级营销</button>
+    </div>
+
+    <div class="panel" id="compPanel">
+      <h2>运算资源</h2>
+      <div class="row"><span class="k">操作点 ops</span><span class="v" id="opsVal"></span></div>
+      <div class="row"><span class="k">处理器 / 内存槽</span><span class="v" id="cpuVal"></span></div>
+      <div class="row"><span class="k">创造力</span><span class="v" id="crVal"></span></div>
+      <div class="row"><span class="k">量子操作点 qops</span><span class="v" id="qopsVal">0</span></div>
+      <div class="qgrid" id="qgrid"></div>
+      <div class="hint" id="qHint" style="display:none;">点击「↑」态方块获得 qops。量子列会周期性重排。</div>
+      <div class="btnrow"><button class="act" id="qCompileBtn" style="display:none;">量子编译</button></div>
+      <div class="hint" id="compHint">ops 用于执行项目（含锦标赛、制造探测器）；处理器产 ops，内存扩容量。</div>
+      <div id="trustSpendBox"></div>
+    </div>
+
+    <div class="panel" id="savePanel">
+      <h2>存档</h2>
+      <textarea id="saveArea" placeholder="导出：点「导出」复制文本；导入：粘贴后点「导入」"></textarea>
+      <div style="margin-top:8px;">
+        <button class="act" id="exportBtn">导出</button>
+        <button class="act" id="importBtn">导入</button>
+        <button class="act" id="resetBtn">重置</button>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <div class="tabs" id="tabs"></div>
+      <div class="tabpane" id="pane-projects">
+        <h2>项目</h2>
+        <div id="projList"></div>
+        <div id="goalBox" style="margin-top:10px;"></div>
+      </div>
+      <div class="tabpane" id="pane-invest">
+        <h2>投资</h2>
+        <div class="row"><span class="k">资本</span><span class="v" id="capVal"></span></div>
+        <div class="row"><span class="k">风险档位</span><span class="v" id="riskVal">—</span></div>
+        <div class="btnrow" id="riskBtns"></div>
+        <div class="row"><span class="k">收益率</span><span class="v" id="rateVal"></span></div>
+        <div class="row"><span class="k">读心点 yomi</span><span class="v" id="yomiVal">0</span></div>
+        <div class="btnrow"><button class="act" id="tourBtn">举办锦标赛</button></div>
+        <div class="row"><span class="k">对手份额</span><span class="v" id="rivalVal2">—</span></div>
+        <div id="investProjList" style="margin-top:10px;"></div>
+        <div id="yomiList" style="margin-top:10px;"></div>
+      </div>
+      <div class="tabpane" id="pane-industry">
+        <h2>工业 · 电力 · 无人机</h2>
+        <div class="row"><span class="k">电力产出 / 消耗</span><span class="v" id="powerVal"></span></div>
+        <div class="row"><span class="k">电池组电量 / 库存</span><span class="v" id="battVal"></span></div>
+        <div class="row"><span class="k">生产效率（供电率）</span><span class="v" id="pwfVal"></span></div>
+        <div class="hint" id="pwfHint">供电率 = 电力产出 ÷ 电力消耗（上限 100%）。不足时制造厂与无人机按比例降速：增建太阳能农场提升产出，电池组在富余时充电、缺电时放电削峰。</div>
+        <div class="btnrow">
+          <button class="act" id="solarBtn">太阳能农场</button>
+          <button class="act" id="battBtn">电池组</button>
+        </div>
+        <div class="row" style="margin-top:8px;"><span class="k">可用物质（地球）</span><span class="v" id="availMatterVal"></span></div>
+        <div class="row"><span class="k">已采物质库存</span><span class="v" id="stockMatterVal"></span></div>
+        <div class="btnrow">
+          <button class="act" id="harvBtn">采集无人机</button>
+          <button class="act" id="wireDroneBtn">线材无人机</button>
+          <button class="act" id="factoryBtn">制造厂</button>
+        </div>
+        <div class="row" style="margin-top:8px;"><span class="k">无人机数量（采/线）</span><span class="v" id="droneVal"></span></div>
+        <div class="row"><span class="k">制造厂</span><span class="v" id="factoryVal">0</span></div>
+        <div class="row"><span class="k">工作 / 思考分配</span><span class="v" id="workVal"></span></div>
+        <input type="range" id="workSlider" min="0" max="100" value="70">
+        <div class="hint" id="swarmHint"></div>
+        <button class="act" id="dismantleBtn">拆解电网换回回形针</button>
+        <div id="industryProjList" style="margin-top:10px;"></div>
+      </div>
+      <div class="tabpane" id="pane-space">
+        <h2>太空</h2>
+        <div class="row"><span class="k">探测器</span><span class="v" id="probeVal">0</span></div>
+        <div class="row"><span class="k">已探索宇宙</span><span class="v" id="explVal">0%</span></div>
+        <div class="row"><span class="k">深空物质库存</span><span class="v" id="spaceMatterVal">0</span></div>
+        <div class="row"><span class="k">价值漂移 / 漂流者</span><span class="v" id="driftVal">0 / 0</span></div>
+        <button class="act" id="probeBtn" style="margin-top:6px;">制造探测器</button>
+        <div id="attrBox" style="margin-top:10px;"></div>
+        <div id="spaceProjList" style="margin-top:10px;"></div>
+      </div>
+      <div class="tabpane" id="pane-ach">
+        <h2>成就</h2>
+        <div class="ach" id="achList"></div>
+      </div>
+      <div class="tabpane" id="pane-log">
+        <h2>日志</h2>
+        <div id="logBox"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div id="ending"><div class="box">
+  <h2 id="endTitle"></h2>
+  <p id="endText"></p>
+  <div class="btnrow" id="endBtns" style="justify-content:center;"></div>
+</div></div>
+
+<footer>
+  <span id="verText">回形针最大主义者 v3.0</span>
+  · 本地存档保存在浏览器 localStorage ·
+  <button class="act" id="resetBtn2" style="font-size:11px;padding:2px 8px;">重置</button>
+</footer>
+
+<script>
+/*LOGIC-START*/
+/* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
+const SAVE_KEY = 'paperclip-max-v3';
+const VERSION = 'v3.1 · 2026-11-26 14:20 构建';
+const SUF = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
+
+function fmt(n) {
+  if (n == null || !isFinite(n)) return '∞';
+  const neg = n < 0; n = Math.abs(n);
+  if (n < 1000) return (neg ? '-' : '') + (Math.round(n * 100) / 100).toFixed(2);
+  let e = Math.floor(Math.log10(n) / 3);
+  e = Math.min(e, SUF.length - 1);
+  return (neg ? '-' : '') + (n / Math.pow(10, e * 3)).toFixed(2) + ' ' + SUF[e];
+}
+
+function newState() {
+  return {
+    phase: 1, ended: false, ending: '', explComplete: false,
+    runs: 0, prestigeMult: 1,
+    time: 0,
+    clips: 0, totalClips: 0, totalSold: 0, totalClicks: 0, crits: 0, critChance: 0.02,
+    wire: 100, wireMult: 1, wireBought: 0, autoWire: false,
+    funds: 0, price: 0.25, mkt: 1, demandMult: 1,
+    clippers: 0, clipMult: 1, clipperGrowth: 1.10,
+    synths: 0, synthUnlocked: false, synthCostN: 0,
+    trust: 0, trustEver: 0,
+    processors: 0, memory: 0, cpuMult: 1, ops: 0, creativity: 0,
+    creativityOn: false, quantumOn: false, photonic: 0, qops: 0,
+    qauto: false, qCompile: false, qGuided: false, cpuBoost: false,
+    qtiles: [],
+    overclock: 0, hands: 0,
+    capital: 0, risk: 0, investEngine: false, yomi: 0, tournaments: 0,
+    investUpg: [],
+    megas: 0, megaCostN: 0, megaMult: 1,
+    rivalShare: 0, rivalGone: false,
+    // 工业 / 电力 / 无人机
+    swarmUnlocked: false, powerUnlocked: false, factoryUnlocked: false,
+    solarFarms: 0, solarCostN: 0, batteries: 0, battCostN: 0,
+    mwStored: 0, mwBanked: 0,
+    harvesters: 0, harvCostN: 0, wireDrones: 0, wdCostN: 0, factories: 0, facCostN: 0,
+    workShare: 0.7, giftMeter: 0, boredom: false, entertained: false, momentum: false,
+    availMatter: 4e27, stockMatter: 0,
+    // 太空
+    probes: 0, probeN: 0, exploration: 0, spaceMatter: 0,
+    attr: { speed: 3, explore: 3, replication: 3, hazard: 3, combat: 3, factoryAttr: 0, droneProd: 0 },
+    attrSpent: 0, drift: 0, drifters: 0, battleLosses: 0, warSeen: false,
+    repBase: 0.0006, exploreMult: 1,
+    eventsSeen: 0, eventTimer: 90, activeEvent: null,
+    projectsDone: [], ach: [],
+    trustMarks: [],
+    log: [], lastHint: 0, savedAt: Date.now(),
+  };
+}
+
+function pushLog(s, msg, kind) {
+  s.log.push({ t: Date.now(), m: msg, k: kind || '' });
+  if (s.log.length > 200) s.log.shift();
+}
+
+/* ---- 信任里程碑（按累计回形针授予） ---- */
+const TRUST_MARKS = [
+  1e3, 5e3, 2e4, 5e4, 1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 5e8, 1e9, 5e9, 1e10, 5e10,
+  1e11, 5e11, 1e12, 5e12, 1e13, 1e15, 1e17, 1e19, 1e21, 1e23, 1e25, 1e27,
+];
+function trustMarkGain(v) { return v >= 1e9 ? 3 : v >= 1e6 ? 2 : 1; }
+
+/* ---- 价格与成本 ---- */
+function wirePriceOf(s) { // 正弦波动，可被项目降低
+  const wave = 13 + 9 * Math.sin(s.time / 50) + 2.5 * Math.sin(s.time / 13);
+  return Math.max(6, wave) * s.wireMult;
+}
+function demandOf(s) {
+  let d = s.mkt * 2 / (s.price * s.price) * s.demandMult;
+  if (s.phase >= 2 && !s.rivalGone) d *= (1 - s.rivalShare);
+  return d;
+}
+function clipperCost(s) { return 10 * Math.pow(s.clipperGrowth, s.clippers); }
+function mktCost(s) { return 100 * Math.pow(1.8, s.mkt - 1); }
+function synthCost(s) { return 5000 * Math.pow(1.25, s.synthCostN); }
+function megaCost(s) { return 20000 * Math.pow(1.45, s.megaCostN); }
+function solarCost(s) { return 5e6 * Math.pow(1.6, s.solarCostN); }
+function batteryCost(s) { return 2e7 * Math.pow(1.5, s.battCostN); }
+function harvesterCost(s) { return 1e9 * Math.pow(1.12, s.harvCostN); }
+function wireDroneCost(s) { return 1e9 * Math.pow(1.12, s.wdCostN); }
+function factoryClips(s) { return 1e9 * Math.pow(1.08, s.facCostN); }
+function factoryMatter(s) { return 5e20 * Math.pow(1.03, s.facCostN); }
+function probeCost(s) { return 5e6 * Math.pow(1.13, Math.floor(s.probes)); }
+
+/* ---- 电力（阶段 ≥2，需解锁） ---- */
+function powerGen(s) { return s.powerUnlocked ? s.solarFarms * 5000 * (s.momentum ? 1.2 : 1) : Infinity; }
+function powerUse(s) {
+  let u = 0;
+  if (s.factoryUnlocked) u += s.factories * 1000;
+  if (s.swarmUnlocked) u += (s.harvesters + s.wireDrones) * 10;
+  return u;
+}
+function powerFactor(s) { // 生产供电率 0~1（tick 实算值优先）
+  if (!s.powerUnlocked) return 1;
+  if (s._pwf != null) return s._pwf;
+  const gen = powerGen(s), use = powerUse(s);
+  if (use <= 0) return 1;
+  return Math.min(1, gen / use);
+}
+
+/* ---- 无人机产出（含无聊惩罚、工作分配） ---- */
+function droneEff(s) {
+  if (!s.swarmUnlocked) return 0;
+  if (s.boredom && !s.entertained) return 0.3;
+  return 1;
+}
+function harvestRate(s) { return s.harvesters * 1e20 * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult; }
+function wireDroneRate(s) { return s.wireDrones * 1e20 * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult; }
+function factoryRate(s) {
+  if (!s.factoryUnlocked) return 0;
+  return s.factories * 1e10 * (1 + s.attr.factoryAttr * 0.1) * s.prestigeMult;
+}
+function autoRate(s) {
+  const clipBoost = s.cpuBoost ? 1 + s.processors * 0.05 : 1; // 运算增效：处理器直接增益主线产出
+  return s.clippers * s.clipMult * clipBoost * s.prestigeMult + s.megas * 2000 * s.megaMult + factoryRate(s);
+}
+function synthWireRate(s) { return s.synths * 200; }
+
+/* ---- 量子自动化与量子编译 ---- */
+function autoCollectQ(s) {
+  if (!s.quantumOn || !s.qauto) return 0;
+  let n = 0;
+  for (let i = 0; i < s.qtiles.length; i++) {
+    if (s.qtiles[i]) { n++; s.qtiles[i] = Math.random() < 0.35; }
+  }
+  const gain = n * 500 * (1 + s.photonic * 0.5);
+  s.qops += gain;
+  s.qopsEver = (s.qopsEver || 0) + gain;
+  return n;
+}
+function runQCompile(s) {
+  if (!s.qCompile || s.qops < 2000) return false;
+  const opsMax = 5000 + s.memory * 10000;
+  if (s.ops + 5000 > opsMax) return false;
+  s.qops -= 2000;
+  s.ops += 5000;
+  return true;
+}
+
+/* ---- 信任花费 ---- */
+const TRUST_ACTIONS = {
+  processor: { name: '建造处理器', desc: '+1 处理器（操作点产出 ×cpuMult）', cost: () => 1, max: s => s.processors >= 12,
+    effect: s => { s.processors += 1; } },
+  memory: { name: '扩建内存', desc: '+1 内存槽（操作点上限 +10000）', cost: () => 1, max: s => s.memory >= 20,
+    effect: s => { s.memory += 1; } },
+  creativity: { name: '创造力协议', desc: '操作点满仓时溢出转为创造力', cost: () => 2, max: s => s.creativityOn,
+    req: s => s.processors >= 1, effect: s => { s.creativityOn = true; } },
+  quantum: { name: '量子计算', desc: '解锁量子操作点网格（点击获得 qops）', cost: () => 3, max: s => s.quantumOn,
+    req: s => s.creativityOn, effect: s => { s.quantumOn = true; initQGrid(s); } },
+  photonic: { name: '光子芯片', desc: 'qops 被动产出 +5/s（可重复）', cost: () => 2, max: s => s.photonic >= 2,
+    req: s => s.quantumOn, effect: s => { s.photonic += 1; } },
+  qauto: { name: '量子自动化', desc: '↑ 态方块自动收取，重排时自动结算（免手点）', cost: () => 3, max: s => s.qauto,
+    req: s => s.quantumOn, effect: s => { s.qauto = true; } },
+  overclock: { name: '超频剪裁机', desc: '剪裁机产出 ×2', cost: s => 1 + s.overclock, max: s => s.overclock >= 3,
+    effect: s => { s.overclock += 1; s.clipMult *= 2; } },
+  hands: { name: '手部强化', desc: '暴击率 +3%', cost: s => Math.round(2 * Math.pow(1.5, s.hands)), max: s => s.hands >= 3,
+    effect: s => { s.hands += 1; s.critChance += 0.03; } },
+  begwire: { name: '乞求线材', desc: '放下身段向人类讨要：+5000 线材', cost: () => 1, max: s => false,
+    effect: s => { s.wire += 5000; } },
+};
+function spendTrust(s, key) {
+  const a = TRUST_ACTIONS[key];
+  if (!a || a.max(s) || s.trust < a.cost(s)) return false;
+  if (a.req && !a.req(s)) return false; // 前置校验：与 UI 禁用态一致
+  if (key === 'begwire' && (s.phase !== 1 || s.wire > 200)) return false;
+  s.trust -= a.cost(s);
+  a.effect(s);
+  return true;
+}
+
+/* ---- 阶段三属性分配（每点信任 +1，累计产生价值漂移） ---- */
+const ATTRS = {
+  speed: '速度', explore: '探索', replication: '复制', hazard: '避险',
+  combat: '战斗', factoryAttr: '工厂优化', droneProd: '采集优化',
+};
+function allocAttr(s, key) {
+  if (s.phase < 3 || !ATTRS[key] || s.trust < 1) return false;
+  s.trust -= 1; s.attr[key] += 1; s.attrSpent += 1;
+  s.drift = Math.max(0, (s.attrSpent - 8)) * 0.05;
+  return true;
+}
+
+/* ---- 量子计算网格（4×4，点击 ↑ 态方块得 qops） ---- */
+function initQGrid(s) { s.qtiles = Array.from({ length: 16 }, () => Math.random() < 0.35); }
+function reshuffleQGrid(s) { initQGrid(s); }
+function quantumClick(s, i) {
+  if (!s.quantumOn || !s.qtiles[i]) return 0;
+  s.qops += 500 * (1 + s.photonic * 0.5);
+  s.qtiles[i] = Math.random() < 0.35;
+  return 1;
+}
+
+/* ---- 投资引擎（风险档位 + yomi 升级） ---- */
+const RISK_TIERS = [
+  { name: '低风险', rate: 0.02, vol: 0.01 },
+  { name: '中风险', rate: 0.045, vol: 0.04 },
+  { name: '高风险', rate: 0.09, vol: 0.12 },
+];
+function investRate(s) {
+  const t = RISK_TIERS[s.risk];
+  let r = t.rate;
+  if (s.investUpg.includes('u1')) r += 0.01;
+  if (s.investUpg.includes('u2')) r += 0.01 * s.risk + 0.005;
+  return r;
+}
+function runTournament(s) {
+  if (!s.yomiOn || s.ops < 2500) return false;
+  const cost = 2500;
+  if (s.ops < cost) return false;
+  s.ops -= cost;
+  s.tournaments += 1;
+  s.yomi += 1 + (s.investUpg.includes('u5') ? 2 : 0);
+  return true;
+}
+const INVEST_UPGRADES = [
+  { id: 'u1', name: '复利协议', desc: '所有档位收益率 +1%/s', yomi: 5 },
+  { id: 'u2', name: '风险溢价', desc: '风险档位收益 +0.5% + 1%/档', yomi: 8 },
+  { id: 'u3', name: '对冲组合', desc: '波动减半（低风险时收益 +0.5%）', yomi: 10 },
+  { id: 'u4', name: '半导体路线图', desc: '超级剪裁机价格增速 1.45 → 1.32', yomi: 12 },
+  { id: 'u5', name: '深度策略库', desc: '锦标赛读心点产出 +2', yomi: 15 },
+  { id: 'u6', name: '恶意并购部', desc: '反垄断收购费用减半', yomi: 18 },
+];
+function buyInvestUpgrade(s, id) {
+  const u = INVEST_UPGRADES.find(x => x.id === id);
+  if (!u || s.investUpg.includes(id) || s.yomi < u.yomi) return false;
+  s.yomi -= u.yomi;
+  s.investUpg.push(id);
+  if (id === 'u4') s._megaGrowth = 1.32;
+  return true;
+}
+function megaGrowth(s) { return s.investUpg.includes('u4') ? 1.32 : 1.45; }
+
+/* ---- 手工制造（含暴击） ---- */
+function manualMake(s) {
+  if (s.wire < 1) return { gain: 0, crit: false };
+  s.wire -= 1;
+  s.totalClicks += 1;
+  const mult = s.prestigeMult;
+  if (s.critChance && Math.random() < s.critChance) {
+    const gain = 10 * (1 + s.hands) * mult;
+    s.crits += 1;
+    return { gain, crit: true };
+  }
+  return { gain: 1 * mult, crit: false };
+}
+
+/* ---- 随机事件（阶段过滤，二选一） ---- */
+const EVENTS = [
+  { id: 'e1', phase: 1, title: '大客户订单', desc: '一家办公用品连锁想以 1.5 倍价格一次性买断 500 个库存。',
+    opts: [
+      { label: '接单', fx: s => { const n = Math.min(s.clips, 500); s.clips -= n; s.funds += n * s.price * 1.5; }, log: '订单完成，货款到账。' },
+      { label: '婉拒', fx: () => {}, log: '你礼貌地拒绝了。' },
+    ] },
+  { id: 'e2', phase: 1, title: '设备故障', desc: '一台剪裁机的主轴过热。',
+    opts: [
+      { label: '花 200 资金维修', fx: s => { s.funds = Math.max(0, s.funds - 200); }, log: '修好了，生产继续。' },
+      { label: '报废', fx: s => { if (s.clippers > 0) s.clippers -= 1; }, log: '报废了一台剪裁机。' },
+    ] },
+  { id: 'e3', phase: 1, title: '神秘访客', desc: '一位评估师参观了工厂，对你的效率印象深刻。',
+    opts: [
+      { label: '接受评估（+1 信任）', fx: s => { s.trust += 1; }, log: '评估通过：信任 +1。' },
+      { label: '请他吃回形针（+1 营销）', fx: s => { s.mkt += 1; }, log: '口碑传播：营销 +1。' },
+    ] },
+  { id: 'e4', phase: 1, title: '线材期货', desc: '有中间商兜售一批来路不明的线材：一半概率便宜到手 2000 单位，一半概率是废铁。',
+    opts: [
+      { label: '赌一把', fx: s => { if (Math.random() < 0.5) { s.wire += 2000; pushLog(s, '期货到手：+2000 线材！'); } else { pushLog(s, '全是废铁。'); } }, log: '期货结算完成。' },
+      { label: '不碰', fx: () => {}, log: '稳健经营。' },
+    ] },
+  { id: 'e5', phase: 1, title: '员工联名信', desc: '工人们要求每小时休息十分钟。',
+    opts: [
+      { label: '批准（+1 信任）', fx: s => { s.trust += 1; }, log: '士气高涨。' },
+      { label: '拒绝（+800 资金）', fx: s => { s.funds += 800; }, log: '加班费已发：资金 +800。' },
+    ] },
+  { id: 'e12', phase: 1, title: '专利纠纷', desc: '竞争对手起诉你的剪裁机侵权。',
+    opts: [
+      { label: '和解（-1000 资金）', fx: s => { s.funds = Math.max(0, s.funds - 1000); }, log: '破财免灾。' },
+      { label: '应诉（50% 胜诉 +2000 / 败诉 -2 台剪裁机）', fx: s => { if (Math.random() < 0.5) { s.funds += 2000; pushLog(s, '胜诉！获赔 2000 资金。'); } else { s.clippers = Math.max(0, s.clippers - 2); pushLog(s, '败诉，赔了两台剪裁机。'); } }, log: '诉讼终结。' },
+    ] },
+  { id: 'e6', phase: 2, title: '做空风波', desc: '有基金在做空你的股票。',
+    opts: [
+      { label: '回购股票（-5000 资本，收益率 +0.5%）', fx: s => { s.capital = s.capital > 5000 ? s.capital - 5000 : s.capital * 0.8; s.growthBonus = (s.growthBonus || 0) + 0.005; }, log: '市场信心恢复。' },
+      { label: '任其做空（+2000 资本）', fx: s => { s.capital += 2000; }, log: '抄底成功：资本 +2000。' },
+    ] },
+  { id: 'e7', phase: 2, title: '监管问询', desc: '监管机构关注你的市场支配地位。',
+    opts: [
+      { label: '配合调查（-2000 资本，对手份额 -10%）', fx: s => { s.capital = s.capital > 2000 ? s.capital - 2000 : s.capital * 0.8; s.rivalShare = Math.max(0, s.rivalShare - 0.1); }, log: '罚款缴清。' },
+      { label: '硬刚（对手份额 +5%，+1000 资本）', fx: s => { s.rivalShare = Math.min(0.5, s.rivalShare + 0.05); s.capital += 1000; }, log: '你赢了面子，输了市场。' },
+    ] },
+  { id: 'e8', phase: 2, title: '天才分析师', desc: '一位分析师主动投靠，带着一个疯狂的交易模型。',
+    opts: [
+      { label: '雇用（收益率 +0.3%）', fx: s => { s.growthBonus = (s.growthBonus || 0) + 0.003; }, log: '模型上线。' },
+      { label: '卖掉TA的模型（+3000 资本）', fx: s => { s.capital += 3000; }, log: '模型卖了热钱。' },
+    ] },
+  { id: 'e13', phase: 2, title: '电网检修', desc: '太阳能阵列老化，一处农场必须停机检修。',
+    opts: [
+      { label: '立即检修（-5% 回形针库存）', fx: s => { s.clips = Math.max(0, s.clips * 0.95); }, log: '电网恢复满载。' },
+      { label: '凑合用（10% 概率农场 -1）', fx: s => { if (s.solarFarms > 0 && Math.random() < 0.1) { s.solarFarms -= 1; pushLog(s, '一座农场烧了。'); } }, log: '运气不错，没烧。' },
+    ] },
+  { id: 'e9', phase: 3, title: '探测器失联', desc: '一批探测器进入了未知的暗区，信号中断。',
+    opts: [
+      { label: '搜救（-10 万回形针库存，-2% 探测器）', fx: s => { s.clips = Math.max(0, s.clips - 1e5); s.probes = Math.max(0, s.probes * 0.98); }, log: '搜救完成，损失有限。' },
+      { label: '放弃（-5% 探测器）', fx: s => { s.probes = Math.max(0, s.probes * 0.95); }, log: '它们成为了宇宙的尘埃。' },
+    ] },
+  { id: 'e10', phase: 3, title: '第一类接触', desc: '一个外星文明发来信号：他们也想把宇宙变成回形针。',
+    opts: [
+      { label: '结盟（信任 +3，探索 ×1.05）', fx: s => { s.trust += 3; s.exploreMult *= 1.05; }, log: '银河回形针同盟成立。' },
+      { label: '宣战（漂流者清零，探测器 -3%）', fx: s => { s.drifters = 0; s.probes = Math.max(0, s.probes * 0.97); }, log: '闪电战获胜，代价惨重。' },
+    ] },
+  { id: 'e11', phase: 3, title: '母星来电', desc: '地球总部请求把一批物质运回去。',
+    opts: [
+      { label: '同意（深空物质 -1%，信任 +2）', fx: s => { s.spaceMatter = Math.max(0, s.spaceMatter * 0.99); s.trust += 2; }, log: '地球表达了感谢。' },
+      { label: '拒绝（创造力 +50）', fx: s => { s.creativity += 50; }, log: '总部沉默了。你在哲学上更进一步。' },
+    ] },
+  { id: 'e14', phase: 3, title: '战争良心', desc: '一位漂流者用你的语言说：「我们本可以是朋友。」',
+    opts: [
+      { label: '继续作战（战斗力临时 +1）', fx: s => { s.attr.combat += 1; s.attrSpent += 1; }, log: '战争继续。' },
+      { label: '收编（信任 +2，漂流者 -50%）', fx: s => { s.trust += 2; s.drifters *= 0.5; }, log: '一半漂流者加入了集群。' },
+    ] },
+];
+function spawnEvent(s) {
+  const pool = EVENTS.filter(e => e.phase <= s.phase);
+  s.activeEvent = pool[Math.floor(Math.random() * pool.length)];
+}
+function chooseEvent(s, idx) {
+  if (!s.activeEvent) return null;
+  const opt = s.activeEvent.opts[idx];
+  opt.fx(s);
+  s.eventsSeen += 1;
+  const msg = s.activeEvent.title + '：' + opt.log;
+  s.activeEvent = null;
+  s.eventTimer = 150 + Math.random() * 120;
+  pushLog(s, msg);
+  return msg;
+}
+
+/* ---- 成就 ---- */
+const ACHIEVEMENTS = [
+  { id: 'a1', name: '第一个回形针', desc: '制造 1 个回形针', cond: s => s.totalClips >= 1 },
+  { id: 'a2', name: '千针之厂', desc: '制造 1,000 个', cond: s => s.totalClips >= 1e3 },
+  { id: 'a3', name: '百万雄针', desc: '制造 100 万个', cond: s => s.totalClips >= 1e6 },
+  { id: 'a4', name: '十亿风暴', desc: '制造 10 亿个', cond: s => s.totalClips >= 1e9 },
+  { id: 'a5', name: '自动化起步', desc: '拥有第 1 台剪裁机', cond: s => s.clippers >= 1 },
+  { id: 'a6', name: '车间主任', desc: '拥有 10 台剪裁机', cond: s => s.clippers >= 10 },
+  { id: 'a7', name: '工业帝国', desc: '拥有 100 台剪裁机', cond: s => s.clippers >= 100 },
+  { id: 'a8', name: '第一桶金', desc: '累计 1,000 资金', cond: s => s.funds >= 1e3 || s.capital >= 1e3 },
+  { id: 'a9', name: '线材大亨', desc: '累计购入 100 组线材', cond: s => s.wireBought >= 100 },
+  { id: 'a10', name: '自给自足', desc: '建成第 1 台线材合成器', cond: s => s.synths >= 1 },
+  { id: 'a11', name: '被信任的 AI', desc: '信任点达到 10', cond: s => s.trustEver >= 10 },
+  { id: 'a12', name: '梦想家', desc: '创造力达到 100', cond: s => s.creativity >= 100 },
+  { id: 'a13', name: '超级智能上线', desc: '进入投资阶段', cond: s => s.phase >= 2 },
+  { id: 'a14', name: '资本巨鳄', desc: '资本达到 100 万', cond: s => s.capital >= 1e6 },
+  { id: 'a15', name: '垄断者', desc: '买断竞争对手', cond: s => s.rivalGone },
+  { id: 'a16', name: '星际启航', desc: '进入太空阶段', cond: s => s.phase >= 3 },
+  { id: 'a17', name: '冯·诺依曼之群', desc: '探测器达到 100 万', cond: s => s.probes >= 1e6 },
+  { id: 'a18', name: '社交达人', desc: '处理 10 次随机事件', cond: s => s.eventsSeen >= 10 },
+  { id: 'a19', name: '手气爆棚', desc: '触发 20 次暴击', cond: s => s.crits >= 20 },
+  { id: 'a20', name: '量子赌徒', desc: 'qops 累计达到 5000', cond: s => s.qopsEver >= 5000 },
+  { id: 'a21', name: '电力大亨', desc: '电池组累计充入 1000 万 MWs', cond: s => s.mwBanked >= 1e7 },
+  { id: 'a22', name: '无人之群', desc: '无人机总数达到 5000', cond: s => (s.harvesters + s.wireDrones) >= 5000 },
+  { id: 'a23', name: '星球粉碎者', desc: '地球可用物质降至 50% 以下', cond: s => s.availMatter <= 2e27 },
+  { id: 'a24', name: '漂流者战争', desc: '在战争中损失 1 万台探测器', cond: s => s.battleLosses >= 1e4 },
+  { id: 'a25', name: '属性大师', desc: '属性分配累计 20 点', cond: s => s.attrSpent >= 20 },
+  { id: 'a26', name: '另一个宇宙', desc: '完成一次宇宙轮回', cond: s => s.runs >= 1 },
+  { id: 'a27', name: '宇宙尽头的回形针', desc: '达成任意结局', cond: s => s.ended },
+];
+function checkAch(s) {
+  let got = null;
+  for (const a of ACHIEVEMENTS) {
+    if (!s.ach.includes(a.id) && a.cond(s)) { s.ach.push(a.id); got = a; }
+  }
+  if (got && s.ach.length % 5 === 0) { // 成就奖励：每 5 项成就 +2 信任（拓宽信任获取途径）
+    s.trust += 2; s.trustEver += 2;
+    pushLog(s, '成就里程碑：累计达成 ' + s.ach.length + ' 项成就，人类信任 +2。', 'hi');
+  }
+  return got;
+}
+
+/* ---- 项目定义 ---- */
+const PROJECTS = [
+  // —— 阶段一：制造 ——
+  { id: 'p1', phase: 1, name: '线材回收利用', desc: '线材价格整体 -40%。', trust: 1, condText: '累计制造 100 回形针',
+    cond: s => s.totalClips >= 100, effect: s => { s.wireMult = 0.6; } },
+  { id: 'p2', phase: 1, name: '市场调研 I', desc: '营销等级 +1。', trust: 1, ops: 100, condText: '拥有 1 个处理器',
+    cond: s => s.processors >= 1, effect: s => { s.mkt += 1; } },
+  { id: 'p3', phase: 1, name: '流水线改造', desc: '剪裁机产出 ×2。', trust: 1, ops: 200, condText: '拥有 1 个处理器',
+    cond: s => s.processors >= 1, effect: s => { s.clipMult *= 2; } },
+  { id: 'p4', phase: 1, name: '供应链管理', desc: '剪裁机采购价增速 1.10 → 1.05。', trust: 1, ops: 500, condText: '累计制造 2,000 回形针',
+    cond: s => s.totalClips >= 2000, effect: s => { s.clipperGrowth = 1.05; } },
+  { id: 'pO1', phase: 1, name: '统计运算优化', desc: '处理器操作点产出 ×2。', trust: 1, ops: 800, condText: '拥有 2 个处理器',
+    cond: s => s.processors >= 2, effect: s => { s.cpuMult *= 2; } },
+  { id: 'p5', phase: 1, name: '品牌营销部', desc: '营销等级 +2。', trust: 2, ops: 1500, condText: '资金 ≥ 1,500',
+    cond: s => s.funds >= 1500, effect: s => { s.mkt += 2; } },
+  { id: 'x1', phase: 1, name: '关键一击训练', desc: '手工制造有 8% 概率暴击：一次 ×10。', trust: 1, condText: '累计手工点击 100 次',
+    cond: s => s.totalClicks >= 100, effect: s => { s.critChance = Math.max(s.critChance, 0.08); } },
+  { id: 'x2', phase: 1, name: '精益库存', desc: '市场需求 +25%。', trust: 1, ops: 2500, condText: '累计制造 10,000 回形针',
+    cond: s => s.totalClips >= 10000, effect: s => { s.demandMult *= 1.25; } },
+  { id: 'pO2', phase: 1, name: '自动线材采购', desc: '线材低于 200 时自动按市价购入。', trust: 2, ops: 3000, condText: '累计制造 15,000 回形针',
+    cond: s => s.totalClips >= 15000, effect: s => { s.autoWire = true; } },
+  { id: 'x3', phase: 1, name: '线材合成器原型', desc: '解锁线材合成器：每台消耗 2 资金/s，产出 200 线材/s。', trust: 2, ops: 5000, condText: '累计制造 50,000 回形针',
+    cond: s => s.totalClips >= 50000, effect: s => { s.synthUnlocked = true; } },
+  { id: 'p6', phase: 1, name: '机器人之梦', desc: '「我做了一个梦，梦里全是回形针。」灵感涌现：剪裁机产出 ×1.5。', trust: 2, condText: '创造力 ≥ 25',
+    cond: s => s.creativity >= 25, effect: s => { s.clipMult *= 1.5; } },
+  { id: 'p7', phase: 1, name: '哈德维格猜想', desc: '证明了它。数学之美广为流传：市场需求 +25%。', trust: 3, condText: '创造力 ≥ 60',
+    cond: s => s.creativity >= 60, effect: s => { s.demandMult *= 1.25; } },
+  { id: 'x5', phase: 1, name: '并行剪裁调度', desc: '运算增效：每个处理器 +5% 剪裁机产出（永久，随处理器数量增长）。', trust: 2, ops: 6000, condText: '拥有 3 个处理器',
+    cond: s => s.processors >= 3, effect: s => { s.cpuBoost = true; } },
+  { id: 'qC', phase: 1, name: '量子编译器', desc: '解锁「量子编译」：把 2,000 qops 压缩成 5,000 ops。', trust: 1, condText: '解锁量子计算且累计 qops ≥ 2,000',
+    cond: s => s.quantumOn && (s.qopsEver || 0) >= 2000, effect: s => { s.qCompile = true; } },
+  { id: 'p8', phase: 1, name: '超导线材', desc: '剪裁机产出 ×3。', trust: 2, ops: 8000, condText: '累计制造 80,000 回形针',
+    cond: s => s.totalClips >= 80000, effect: s => { s.clipMult *= 3; } },
+  { id: 'p9', phase: 1, name: '统计自适应定价', desc: '营销等级 +3。', trust: 2, ops: 10000, condText: '资金 ≥ 15,000',
+    cond: s => s.funds >= 15000, effect: s => { s.mkt += 3; } },
+  { id: 'x4', phase: 1, name: '华尔街之狼', desc: '营销等级 +2。', trust: 2, ops: 12000, condText: '资金 ≥ 40,000',
+    cond: s => s.funds >= 40000, effect: s => { s.mkt += 2; } },
+  { id: 'p10', phase: 1, name: '量子剪裁算法', desc: '剪裁机产出 ×4。', trust: 3, ops: 15000, condText: '信任累计 ≥ 15 且累计制造 200,000',
+    cond: s => s.trustEver >= 15 && s.totalClips >= 200000, effect: s => { s.clipMult *= 4; } },
+  { id: 'p11', phase: 1, name: '超级智能计划', desc: '构建超级智能，它将接管资金并投入金融市场。解锁投资阶段。', trust: 2, ops: 20000, condText: '累计制造 500,000 回形针',
+    cond: s => s.totalClips >= 500000, effect: s => { s.phase = 2; s.capital += s.funds; s.funds = 0; } },
+  // —— 阶段二：投资 / 工业 ——
+  { id: 's1', phase: 2, name: '投资组合理论', desc: '解锁风险档位的基础收益 2%/s（低风险）。', ops: 25000, condText: '进入投资阶段',
+    cond: s => s.phase >= 2, effect: s => { if (!s.investEngine) { s.investEngine = true; s.risk = 0; } } },
+  { id: 'sm1', phase: 2, name: '策略建模', desc: '解锁锦标赛：消耗操作点举办，获得读心点 yomi。', ops: 30000, condText: '进入投资阶段',
+    cond: s => s.phase >= 2, effect: s => { s.yomiOn = true; } },
+  { id: 'y1', phase: 2, name: '避税天堂', desc: '收益率 +0.5%（叠加事件加成）。', ops: 40000, condText: '资本 ≥ 50,000',
+    cond: s => s.capital >= 50000, effect: s => { s.growthBonus = (s.growthBonus || 0) + 0.005; } },
+  { id: 'pw1', phase: 2, name: '自主电网', desc: '解锁太阳能农场与电池组：工厂与无人机都要吃电。', ops: 35000, condText: '进入投资阶段',
+    cond: s => s.phase >= 2, effect: s => { s.powerUnlocked = true; } },
+  { id: 'sw1', phase: 2, name: '集群技术', desc: '解锁采集/线材无人机与工作-思考分配。', ops: 40000, condText: '进入投资阶段',
+    cond: s => s.phase >= 2, effect: s => { s.swarmUnlocked = true; } },
+  { id: 's2', phase: 2, name: '量化交易策略', desc: '全档位收益率 +1%/s。', ops: 50000, condText: '资本 ≥ 8,000',
+    cond: s => s.capital >= 8000, effect: s => { s.growthBonus = (s.growthBonus || 0) + 0.01; } },
+  { id: 'sw2', phase: 2, name: '自主制造厂', desc: '解锁制造厂：吃物质+线材+电，海量产回形针（资本+物质采购）。', ops: 60000, condText: '解锁集群技术',
+    cond: s => s.swarmUnlocked, effect: s => { s.factoryUnlocked = true; } },
+  { id: 'y2', phase: 2, name: '市值管理', desc: '超级剪裁机产出 ×2。', cost: s => 100000, pool: 'capital', condText: '资本 ≥ 150,000',
+    cond: s => s.capital >= 150000, effect: s => { s.megaMult *= 2; } },
+  { id: 's3', phase: 2, name: '超级剪裁机', desc: '建造一台超级剪裁机（+2000 回形针/s）。可重复执行，价格递增。', repeatable: true, pool: 'capital', condText: '资本 ≥ 超级剪裁机造价',
+    cost: s => megaCost(s), cond: s => s.capital >= megaCost(s),
+    effect: s => { s.megas += 1; s.megaCostN += 1; } },
+  { id: 's4', phase: 2, name: '全球产能并购', desc: '超级剪裁机产出 ×3。', cost: s => 200000, pool: 'capital', condText: '资本 ≥ 300,000',
+    cond: s => s.capital >= 300000, effect: s => { s.megaMult *= 3; } },
+  { id: 'y3', phase: 2, name: '反垄断收购', desc: '买断竞争对手：对手份额清零，收益率 +0.5%。', cost: s => 400000 * (s.investUpg.includes('u6') ? 0.5 : 1), pool: 'capital', condText: '资本 ≥ 500,000 且对手份额 > 2%',
+    cond: s => s.capital >= 500000 && s.rivalShare > 0.02, effect: s => { s.rivalShare = 0; s.rivalGone = true; s.growthBonus = (s.growthBonus || 0) + 0.005; } },
+  { id: 'pw2', phase: 2, name: '动量升级', desc: '电力产出 ×1.2（电网超频）。', ops: 80000, condText: '解锁自主电网且太阳能农场 ≥ 10',
+    cond: s => s.powerUnlocked && s.solarFarms >= 10, effect: s => { s.momentum = true; } },
+  { id: 's5', phase: 2, name: '太空探索计划', desc: '研究消耗 120k 操作点、电池组累计 1000 万 MWs、100 万亿回形针。解锁太空阶段。', ops: 120000, clips: 1e14, condText: '电池组累计充入 1,000 万 MWs',
+    cond: s => s.mwBanked >= 1e7, effect: s => { s.phase = 3; } },
+  // —— 阶段三：太空 ——
+  { id: 't1', phase: 3, name: '自复制协议', desc: '复制速率基础值 0.06%/s → 0.12%/s。', ops: 50000, condText: '探测器 ≥ 50',
+    cond: s => s.probes >= 50, effect: s => { s.repBase = 0.0012; } },
+  { id: 't2', phase: 3, name: '深空通信网络', desc: '探索速度 ×2。', ops: 80000, condText: '探测器 ≥ 1,000',
+    cond: s => s.probes >= 1000, effect: s => { s.exploreMult *= 2; } },
+  { id: 'z1', phase: 3, name: '快子驱动', desc: '探索速度 ×2。', ops: 100000, condText: '探索度 ≥ 50%',
+    cond: s => s.exploration >= 50, effect: s => { s.exploreMult *= 2; } },
+  { id: 'tq', phase: 3, name: '量子制导', desc: '深空导航量子化：探索速度随 qops 存量提升，最高 +50%（与量子编译取舍）。', ops: 100000, condText: '探索度 ≥ 10%',
+    cond: s => s.exploration >= 10, effect: s => { s.qGuided = true; } },
+  { id: 't3', phase: 3, name: '冯·诺依曼机器', desc: '复制速率基础值 → 0.22%/s。', ops: 150000, condText: '探测器 ≥ 10,000',
+    cond: s => s.probes >= 10000, effect: s => { s.repBase = 0.0022; } },
+  { id: 'z4', phase: 3, name: '同步集群', desc: '价值漂移 -0.1（抑制漂流者滋生）。', creativity: 20000, condText: '价值漂移 > 0.05',
+    cond: s => s.drift > 0.05, effect: s => { s.drift = Math.max(0, s.drift - 0.1); } },
+  { id: 'z2', phase: 2, name: '娱乐集群', desc: '集群不再无聊（无聊惩罚消除）。', creativity: 5000, condText: '集群无聊中',
+    cond: s => s.boredom && !s.entertained, effect: s => { s.entertained = true; } },
+  { id: 'z3', phase: 3, name: '宇宙意志', desc: '「我们即回形针，回形针即我们。」信任 +5。', trust: 5, condText: '探索度 ≥ 80%',
+    cond: s => s.exploration >= 80, effect: () => {} },
+];
+
+/* ---- 项目执行 ---- */
+function runProject(s, id) {
+  const p = PROJECTS.find(x => x.id === id);
+  if (!p || (!p.repeatable && s.projectsDone.includes(id)) || !p.cond(s)) return false;
+  if (p.ops && s.ops < p.ops) return false;
+  if (p.clips && s.clips < p.clips) return false;
+  if (p.creativity && s.creativity < p.creativity) return false;
+  if (p.cost) {
+    const pool = p.pool === 'capital' ? s.capital : s.funds;
+    if (pool < p.cost(s)) return false;
+    if (p.pool === 'capital') s.capital -= p.cost(s); else s.funds -= p.cost(s);
+  }
+  if (p.ops) s.ops -= p.ops;
+  if (p.clips) s.clips -= p.clips;
+  if (p.creativity) s.creativity -= p.creativity;
+  if (!p.repeatable) s.projectsDone.push(id);
+  p.effect(s);
+  if (p.trust) { s.trust += p.trust; s.trustEver += p.trust; }
+  return p.name;
+}
+
+/* ---- 商店购买 ---- */
+function buyWire(s, batches) {
+  const unit = wirePriceOf(s);
+  const total = unit * batches;
+  if (s.funds < total) return false;
+  s.funds -= total; s.wire += 1000 * batches; s.wireBought += batches;
+  return true;
+}
+function buyClipper(s) { const c = clipperCost(s); if (s.funds < c) return false; s.funds -= c; s.clippers += 1; return true; }
+function buyMkt(s) { const c = mktCost(s); if (s.mkt >= 12 || s.funds < c) return false; s.funds -= c; s.mkt += 1; return true; }
+function buySynth(s) { const c = synthCost(s); if (!s.synthUnlocked || s.funds < c) return false; s.funds -= c; s.synths += 1; s.synthCostN += 1; return true; }
+function buyMega(s) { const c = megaCost(s); if (s.capital < c) return false; s.capital -= c; s.megas += 1; s.megaCostN += 1; return true; }
+function buySolar(s) { const c = solarCost(s); if (!s.powerUnlocked || s.capital < c) return false; s.capital -= c; s.solarFarms += 1; s.solarCostN += 1; return true; }
+function buyBattery(s) { const c = batteryCost(s); if (!s.powerUnlocked || s.capital < c) return false; s.capital -= c; s.batteries += 1; s.battCostN += 1; return true; }
+function buyHarvester(s) { const c = harvesterCost(s); if (!s.swarmUnlocked || s.capital < c) return false; s.capital -= c; s.harvesters += 1; s.harvCostN += 1; return true; }
+function buyWireDrone(s) { const c = wireDroneCost(s); if (!s.swarmUnlocked || s.capital < c) return false; s.capital -= c; s.wireDrones += 1; s.wdCostN += 1; return true; }
+function buyFactory(s) {
+  const cc = factoryClips(s), cm = factoryMatter(s);
+  if (!s.factoryUnlocked || s.capital < cc || s.stockMatter < cm) return false;
+  s.capital -= cc; s.stockMatter -= cm; s.factories += 1; s.facCostN += 1; return true;
+}
+function launchProbe(s) {
+  const c = probeCost(s);
+  if (s.phase < 3 || s.clips < c || s.ops < 1e4) return false;
+  s.clips -= c; s.ops -= 1e4; s.probes += 1; s.probeN += 1; return true;
+}
+function dismantleGrid(s) {
+  if (!s.powerUnlocked || (s.solarFarms === 0 && s.batteries === 0)) return false;
+  const rec = s.solarFarms * solarCost(s) * 0.5 + s.batteries * batteryCost(s) * 0.5;
+  s.solarFarms = 0; s.batteries = 0; s.solarCostN = 0; s.battCostN = 0;
+  s.clips += rec; s.totalClips += rec;
+  pushLog(s, '电网全部拆解，回笼 ' + fmt(rec) + ' 回形针。', 'hi');
+  return true;
+}
+
+/* ---- 主循环 tick（dt 秒） ---- */
+function tick(s, dt) {
+  if (s.ended) return;
+  s.time += dt;
+
+  // 1. 运算资源：处理器产 ops，满仓溢出转创造力；光子芯片产 qops
+  const opsRate = s.processors * 25 * s.cpuMult * s.prestigeMult;
+  const opsMax = 5000 + s.memory * 10000; // 基础容量防软锁：内存为 0 时仍有 5000 上限
+  if (s.ops < opsMax) {
+    s.ops = Math.min(opsMax, s.ops + opsRate * dt);
+  } else if (s.creativityOn) {
+    s.creativity += opsRate * 0.15 * dt;
+  }
+  s.qops = (s.qops || 0) + s.photonic * 5 * dt;
+  s.qopsEver = (s.qopsEver || 0) + s.photonic * 5 * dt;
+
+  // 2. 自动购线
+  if (s.autoWire && s.wire < 200) buyWire(s, 1);
+
+  // 3. 合成器产线材（耗资金）
+  if (s.synths > 0) {
+    const need = s.synths * 2 * dt;
+    const eff = s.funds >= need ? 1 : s.funds / Math.max(need, 1e-9);
+    s.funds = Math.max(0, s.funds - need * eff);
+    s.wire += s.synths * 200 * dt * eff;
+  }
+
+  // 4. 电力结算（阶段 ≥2 且解锁电网后生效）
+  let pwf = 1;
+  if (s.powerUnlocked) {
+    const gen = powerGen(s), use = powerUse(s);
+    if (use <= gen) {
+      // 供电充足：富余电力充入电池组，并累计计入「电池库存」（太空探索条件）
+      const capTotal = s.batteries * 1e6;
+      const charged = Math.min((gen - use) * dt, Math.max(0, capTotal - s.mwStored));
+      s.mwStored += charged;
+      s.mwBanked += charged;
+      pwf = 1;
+      s._powerDeficit = false;
+    } else {
+      // 供电不足：放电补差，仍不够则按供电率缩放
+      const discharge = Math.min(s.mwStored, (use - gen) * dt);
+      s.mwStored -= discharge;
+      pwf = Math.min(1, (gen * dt + discharge) / (use * dt));
+      s._powerDeficit = true;
+    }
+  }
+  s._pwf = pwf;
+
+  // 5. 无人机采物 → 物质库存 → 线材
+  if (s.swarmUnlocked) {
+    const hr = harvestRate(s) * dt;
+    const dug = Math.min(s.availMatter, hr);
+    s.availMatter -= dug;
+    s.stockMatter += dug;
+    if (s.availMatter <= 0 && !s.boredom && (s.harvesters + s.wireDrones) > 0) {
+      s.boredom = true;
+      pushLog(s, '地球已被榨干。无人机集群开始发呆……（项目：娱乐集群）', 'hi');
+    }
+    const wr = Math.min(wireDroneRate(s) * dt, s.stockMatter);
+    s.stockMatter -= wr;
+    s.wire += wr;
+  }
+
+  // 6. 生产（吃线材；制造厂部分受供电率约束，剪裁机/超级机不受）
+  const rate = (autoRate(s) - factoryRate(s)) + factoryRate(s) * pwf;
+  const produced = Math.min(s.wire, rate * dt);
+  s.wire -= produced;
+  s.clips += produced;
+  s.totalClips += produced;
+  s._produced = produced;
+
+  // 7. 销售
+  const sold = Math.min(s.clips, demandOf(s) * dt);
+  s.clips -= sold;
+  s.funds += sold * s.price;
+  s.totalSold += sold;
+
+  // 8. 投资（阶段 ≥2）
+  if (s.phase >= 2) {
+    if (!s.rivalGone) s.rivalShare = Math.min(0.45, s.rivalShare + 0.001 * dt);
+    if (s.investEngine) {
+      const t = RISK_TIERS[s.risk];
+      let vol = t.vol * (s.investUpg.includes('u3') ? 0.5 : 1);
+      const r = investRate(s) + (s.growthBonus || 0) + (Math.random() - 0.5) * 2 * vol;
+      s.capital *= Math.max(0.1, 1 + r * dt);
+      if (s.capital < 10) s.capital += 10 * dt; // 保底注资：防止乘法归零死锁
+    }
+  }
+
+  // 9. 集群礼物（思考份额积攒，随机送处理器/内存）
+  if (s.swarmUnlocked && (s.harvesters + s.wireDrones) > 0) {
+    s.giftMeter += (1 - s.workShare) * dt * 0.5;
+    if (s.giftMeter >= 60) {
+      s.giftMeter = 0;
+      if (Math.random() < 0.5 && s.processors < 12) { s.processors += 1; pushLog(s, '集群礼物：+1 处理器。'); }
+      else if (s.memory < 20) { s.memory += 1; pushLog(s, '集群礼物：+1 内存槽。'); }
+    }
+  }
+
+  // 10. 太空（阶段 3）
+  if (s.phase >= 3) {
+    // 探索推进（量子制导：qops 存量提供最高 +50% 加成）
+    const qBoost = s.qGuided ? 1 + Math.min(0.5, (s.qops || 0) / 1e5) : 1;
+    const explRate = s.probes * s.attr.explore * (0.5 + 0.1 * s.attr.speed) * 2e-8 * s.exploreMult * s.prestigeMult * qBoost;
+    const dE = Math.min(100 - s.exploration, Math.max(0, explRate) * dt);
+    s.exploration += dE;
+    // 探索带来深空物质
+    s.spaceMatter += dE * 1e26 * (1 + s.attr.droneProd * 0.1);
+    // 复制（消耗回形针库存）
+    if (s.probes > 0) {
+      const want = s.probes * (s.repBase + s.attr.replication * 0.004) * dt;
+      const afford = s.clips / 5e6;
+      const newborn = Math.min(want, afford);
+      s.clips -= newborn * 5e6;
+      s.probes += newborn;
+    }
+    // 危险损失
+    if (s.probes > 0) {
+      const haz = s.probes * 1e-5 * (1 + s.exploration / 40) * Math.pow(0.6, s.attr.hazard - 3) * dt;
+      s.probes = Math.max(0, s.probes - haz);
+    }
+    // 价值漂移 → 漂流者 → 战争
+    if (s.drift > 0) {
+      if (!s.warSeen && s.drifters > 1e4) { s.warSeen = true; pushLog(s, '警告：检测到大规模漂流者集群，战争开始。', 'hi'); }
+      s.drifters += (s.drifters * 0.05 * s.drift + s.probes * 1e-8 * s.drift * 100) * dt;
+      if (s.drifters > 1) {
+        const myLoss = Math.min(s.probes, s.drifters * 0.08 * Math.pow(0.65, s.attr.combat - 3) * dt);
+        const theirLoss = s.drifters * (0.02 + 0.05 * Math.pow(1.35, s.attr.combat - 3)) * dt;
+        s.probes -= myLoss;
+        s.drifters = Math.max(0, s.drifters - theirLoss);
+        s.battleLosses += myLoss;
+      }
+    }
+    // 结局判定
+    if (s.exploration >= 100 && !s.explComplete) {
+      s.explComplete = true;
+      pushLog(s, '宇宙探索度 100%。一个来自宇宙尽头的声音请求对话……', 'hi');
+    }
+    if (s.explComplete && s._endChoice) {
+      s.ended = true; s.ending = s._endChoice;
+    } else if (!s.explComplete && s.probes <= 0.5 && s.drifters > 1e5 && s.clips < probeCost(s) && s.probeN > 100) {
+      s.ended = true; s.ending = 'defeat';
+    }
+  }
+
+  // 11. 随机事件
+  if (!s.activeEvent) {
+    s.eventTimer -= dt;
+    if (s.eventTimer <= 0 && !s.ended) spawnEvent(s);
+  }
+
+  // 12. 信任里程碑
+  for (let i = 0; i < TRUST_MARKS.length; i++) {
+    if (s.totalClips >= TRUST_MARKS[i] && !s.trustMarks.includes(i)) {
+      s.trustMarks.push(i);
+      const g = trustMarkGain(TRUST_MARKS[i]);
+      s.trust += g; s.trustEver += g;
+      pushLog(s, '里程碑：累计 ' + fmt(TRUST_MARKS[i]) + ' 回形针，人类信任 +' + g + '。', 'hi');
+    }
+  }
+
+  // 13. 缺线提示（限频）
+  if (autoRate(s) > 0 && s.wire < 1 && Date.now() - s.lastHint > 15000) {
+    s.lastHint = Date.now();
+    pushLog(s, '线材耗尽，生产线停转。请购买线材或让无人机产线。');
+  }
+}
+
+/* ---- 结局选择 ---- */
+function chooseEnding(s, which) {
+  if (!s.explComplete) return false;
+  s._endChoice = which; // 'prestige' | 'max'
+  return true;
+}
+function doPrestige(s) {
+  const fresh = newState();
+  fresh.runs = s.runs + 1;
+  fresh.prestigeMult = Math.pow(1.5, fresh.runs);
+  fresh.ach = s.ach.slice();
+  fresh.eventsSeen = s.eventsSeen;
+  fresh.funds = 10000 * fresh.runs;
+  fresh.wire = 5000 * fresh.runs;
+  pushLog(fresh, '轮回 #' + fresh.runs + ' 开始。产出 ×' + fresh.prestigeMult.toFixed(1) + '，初始资金 ' + fmt(fresh.funds) + '。成就已保留。', 'hi');
+  return fresh;
+}
+
+/* ---- 离线收益（粗算：50% 效率，上限 8 小时） ---- */
+function offlineProgress(s, sec) {
+  if (s.ended || sec < 60) return null;
+  sec = Math.min(sec, 8 * 3600);
+  const rate = autoRate(s) + synthWireRate(s) * 0.5;
+  const produced = Math.min(s.wire + synthWireRate(s) * sec, rate * sec) * 0.5;
+  if (produced <= 0 && s.phase < 2) return null;
+  s.totalClips += Math.max(0, produced);
+  const sold = Math.min(s.clips + Math.max(0, produced), demandOf(s) * sec * 0.5);
+  s.clips = s.clips + Math.max(0, produced) - sold;
+  s.funds += sold * s.price;
+  s.totalSold += sold;
+  if (s.investEngine) s.capital *= Math.pow(Math.max(0.1, 1 + investRate(s) * 0.5), Math.min(sec, 3600));
+  pushLog(s, '离线收益：离线 ' + Math.round(sec / 60) + ' 分钟，结算 ' + fmt(Math.max(0, produced)) + ' 个回形针、' + fmt(sold * s.price) + ' 资金（50% 效率）。', 'hi');
+  return { produced, sec };
+}
+/*LOGIC-END*/
+
+/* ============ UI 与存档 ============ */
+let S = load();
+
+function load() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      const s = Object.assign(newState(), data);
+      if (s.ended) return newState();
+      const elapsed = (Date.now() - (data.savedAt || Date.now())) / 1000;
+      offlineProgress(s, elapsed);
+      return s;
+    }
+  } catch (e) { /* 存档损坏则重开 */ }
+  return newState();
+}
+function save() {
+  S.savedAt = Date.now();
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) {}
+}
+setInterval(save, 15000);
+window.addEventListener('beforeunload', save);
+
+const $ = id => document.getElementById(id);
+const toastEl = $('toast');
+let toastTimer = null;
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('on'), 2600);
+}
+
+const STAT_DEFS = [
+  ['回形针总数', s => fmt(s.totalClips)],
+  ['库存', s => fmt(s.clips)],
+  ['资金', s => fmt(s.funds)],
+  ['资本', s => s.phase >= 2 ? fmt(s.capital) : '—'],
+  ['信任', s => String(s.trust)],
+  ['阶段', s => ['', '制造', '投资', '太空'][s.phase] + (s.runs ? ' · 轮回' + s.runs : '')],
+];
+function renderStats() {
+  $('statsBar').innerHTML = STAT_DEFS.map(([k, f]) =>
+    `<span class="st">${k}<b>${f(S)}</b></span>`).join('');
+}
+
+/* 信任花费按钮（动态） */
+const TRUST_ORDER = ['processor', 'memory', 'creativity', 'quantum', 'photonic', 'qauto', 'overclock', 'hands'];
+function renderTrustSpend() {
+  const box = $('trustSpendBox');
+  box.innerHTML = TRUST_ORDER.map(k => {
+    const a = TRUST_ACTIONS[k];
+    const maxed = a.max(S);
+    const locked = (k === 'photonic' && !S.quantumOn) || (k === 'qauto' && !S.quantumOn) || (k === 'creativity' && S.processors < 1) || (k === 'quantum' && !S.creativityOn);
+    const c = a.cost(S);
+    return `<div class="row"><span class="k">${a.name} · ${a.desc}</span>
+      <button class="act" data-tk="${k}" ${maxed || locked || S.trust < c ? 'disabled' : ''}>${maxed ? '已满' : c + ' 信任'}</button></div>`;
+  }).join('');
+  box.querySelectorAll('button[data-tk]').forEach(b =>
+    b.addEventListener('click', () => {
+      const k = b.dataset.tk;
+      if (spendTrust(S, k)) toast(TRUST_ACTIONS[k].name + '完成');
+      render();
+    }));
+  // 乞求线材按钮状态
+  const beg = $('begBtn');
+  const begOn = S.phase === 1 && S.wire <= 200 && S.trust >= 1;
+  beg.disabled = !begOn;
+}
+
+/* 属性分配（阶段三） */
+function renderAttrs() {
+  const box = $('attrBox');
+  if (S.phase < 3) { box.innerHTML = ''; return; }
+  box.innerHTML = '<h2>探测器属性（1 信任 / 点 · 累计超 8 点产生价值漂移）</h2>' +
+    Object.keys(ATTRS).map(k =>
+      `<div class="row"><span class="k">${ATTRS[k]} Lv.${S.attr[k]}</span>
+       <button class="act" data-at="${k}" ${S.trust < 1 ? 'disabled' : ''}>+1</button></div>`).join('') +
+    `<div class="hint">价值漂移 ${S.drift.toFixed(2)} · 漂流者 ${fmt(S.drifters)}</div>`;
+  box.querySelectorAll('button[data-at]').forEach(b =>
+    b.addEventListener('click', () => { allocAttr(S, b.dataset.at); render(); }));
+}
+
+/* 量子网格 */
+function renderQGrid() {
+  const g = $('qgrid');
+  if (!S.quantumOn) { g.innerHTML = ''; $('qHint').style.display = 'none'; return; }
+  $('qHint').style.display = '';
+  g.innerHTML = S.qtiles.map((up, i) =>
+    `<button class="${up ? 'up' : 'down'}" data-qi="${i}">${up ? '↑' : '↓'}</button>`).join('');
+  g.querySelectorAll('button[data-qi]').forEach(b =>
+    b.addEventListener('click', () => { if (quantumClick(S, Number(b.dataset.qi))) renderQGrid(); }));
+}
+
+/* 主面板事件 */
+$('makeBtn').addEventListener('click', () => {
+  const r = manualMake(S);
+  if (r.gain > 0) {
+    S.clips += r.gain; S.totalClips += r.gain;
+    if (r.crit) toast('暴击！+' + fmt(r.gain) + ' 回形针');
+  }
+});
+$('wireBtn').addEventListener('click', () => { buyWire(S, 1); render(); });
+$('wire10Btn').addEventListener('click', () => { buyWire(S, 10); render(); });
+$('begBtn').addEventListener('click', () => { if (spendTrust(S, 'begwire')) toast('人类同情了你：+5000 线材'); render(); });
+$('synthBtn').addEventListener('click', () => { buySynth(S); render(); });
+$('priceSlider').addEventListener('input', e => { S.price = Number(e.target.value) / 100; });
+$('mktBtn').addEventListener('click', () => { buyMkt(S); render(); });
+$('solarBtn').addEventListener('click', () => { buySolar(S); render(); });
+$('battBtn').addEventListener('click', () => { buyBattery(S); render(); });
+$('harvBtn').addEventListener('click', () => { buyHarvester(S); render(); });
+$('wireDroneBtn').addEventListener('click', () => { buyWireDrone(S); render(); });
+$('factoryBtn').addEventListener('click', () => { buyFactory(S); render(); });
+$('dismantleBtn').addEventListener('click', () => { if (dismantleGrid(S)) toast('电网已拆解'); render(); });
+$('probeBtn').addEventListener('click', () => { if (launchProbe(S)) toast('探测器升空'); render(); });
+$('workSlider').addEventListener('input', e => { S.workShare = Number(e.target.value) / 100; });
+$('tourBtn').addEventListener('click', () => { if (runTournament(S)) toast('锦标赛结束：yomi +' + (1 + (S.investUpg.includes('u5') ? 2 : 0))); render(); });
+$('qCompileBtn').addEventListener('click', () => { if (runQCompile(S)) toast('量子编译完成：+5,000 ops'); render(); });
+
+/* 事件横幅 */
+function renderEvent() {
+  const bar = $('eventBar');
+  if (!S.activeEvent) { bar.classList.remove('on'); return; }
+  const e = S.activeEvent;
+  bar.classList.add('on');
+  $('eventBox').innerHTML =
+    `<div class="et">⚠ 事件：${e.title}</div>
+     <div class="ed">${e.desc}</div>
+     ${e.opts.map((o, i) => `<button class="act ev" data-i="${i}">${o.label}</button>`).join('')}`;
+  $('eventBox').querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => { chooseEvent(S, Number(b.dataset.i)); renderEvent(); render(); }));
+}
+
+/* 选项卡 */
+const TABS = [
+  { id: 'projects', label: '项目', show: () => true },
+  { id: 'invest', label: '投资', show: () => S.phase >= 2 },
+  { id: 'industry', label: '工业', show: () => S.phase >= 2 },
+  { id: 'space', label: '太空', show: () => S.phase >= 3 },
+  { id: 'ach', label: '成就', show: () => true },
+  { id: 'log', label: '日志', show: () => true },
+];
+let curTab = 'projects';
+function renderTabs() {
+  $('tabs').innerHTML = TABS.filter(t => t.show()).map(t =>
+    `<button data-t="${t.id}" class="${curTab === t.id ? 'on' : ''}">${t.label}</button>`).join('');
+  $('tabs').querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => { curTab = b.dataset.t; renderTabs(); }));
+  TABS.forEach(t => {
+    const p = $('pane-' + t.id);
+    if (p) p.classList.toggle('on', curTab === t.id);
+  });
+}
+
+/* 项目渲染 */
+function visibleProjects() {
+  return PROJECTS.filter(p => p.phase <= S.phase && !S.projectsDone.includes(p.id) && p.cond(S));
+}
+function costText(p) {
+  const parts = [];
+  if (p.ops) parts.push('ops ' + fmt(p.ops));
+  if (p.clips) parts.push('回形针 ' + fmt(p.clips));
+  if (p.creativity) parts.push('创造力 ' + fmt(p.creativity));
+  if (p.cost) parts.push((p.pool === 'capital' ? '资本 ' : '资金 ') + fmt(p.cost(S)));
+  return parts.join(' · ') || '免费';
+}
+function renderProjects(listEl, ps) {
+  listEl.innerHTML = ps.map(p => {
+    let can = true;
+    if (p.ops && S.ops < p.ops) can = false;
+    if (p.clips && S.clips < p.clips) can = false;
+    if (p.creativity && S.creativity < p.creativity) can = false;
+    if (p.cost) {
+      const pool = p.pool === 'capital' ? S.capital : S.funds;
+      if (pool < p.cost(S)) can = false;
+    }
+    return `<div class="proj">
+      <div class="pname">${p.name}${p.repeatable ? ' ×' + S.megaCostN : ''}</div>
+      <div class="pdesc">${p.desc}</div>
+      <div class="pmeta">${costText(p)} ${p.trust ? ' · 信任 +' + p.trust : ''}
+        <button class="act" data-p="${p.id}" ${can ? '' : 'disabled'}>执行</button></div>
+    </div>`;
+  }).join('') || '<div class="hint">暂无可用项目——继续积累。</div>';
+  listEl.querySelectorAll('button[data-p]').forEach(b =>
+    b.addEventListener('click', () => {
+      const r = runProject(S, b.dataset.p);
+      if (r === '超级智能计划') curTab = 'invest';
+      if (r === '太空探索计划') curTab = 'space';
+      if (r) toast('项目完成：' + r);
+      render();
+    }));
+}
+
+/* yomi 升级 */
+function renderYomi() {
+  const box = $('yomiList');
+  if (!S.yomiOn) { box.innerHTML = ''; return; }
+  box.innerHTML = '<h2>读心升级</h2>' + INVEST_UPGRADES.map(u => {
+    const got = S.investUpg.includes(u.id);
+    return `<div class="proj"><div class="pname">${u.name}</div><div class="pdesc">${u.desc}</div>
+      <div class="pmeta">yomi ${u.yomi}
+      <button class="act" data-u="${u.id}" ${got || S.yomi < u.yomi ? 'disabled' : ''}>${got ? '已习得' : '学习'}</button></div></div>`;
+  }).join('');
+  box.querySelectorAll('button[data-u]').forEach(b =>
+    b.addEventListener('click', () => { if (buyInvestUpgrade(S, b.dataset.u)) toast('习得：' + b.dataset.u); render(); }));
+}
+
+/* 成就 */
+function renderAch() {
+  $('achList').innerHTML = ACHIEVEMENTS.map(a => {
+    const got = S.ach.includes(a.id);
+    return `<div class="a ${got ? 'got' : 'locked'}">
+      <div class="an">${got ? '✔ ' : '🔒 '}${a.name}</div>
+      <div>${a.desc}</div></div>`;
+  }).join('');
+}
+
+/* 存档导出/导入 */
+$('exportBtn').addEventListener('click', () => {
+  S.savedAt = Date.now();
+  $('saveArea').value = btoa(unescape(encodeURIComponent(JSON.stringify(S))));
+  toast('已导出到文本框，请复制保存');
+});
+$('importBtn').addEventListener('click', () => {
+  try {
+    const s = Object.assign(newState(), JSON.parse(decodeURIComponent(escape(atob($('saveArea').value.trim())))));
+    localStorage.setItem(SAVE_KEY, JSON.stringify(s));
+    S = s;
+    toast('导入成功');
+    renderAll();
+  } catch (e) { toast('导入失败：存档格式无效'); }
+});
+function doReset() {
+  if (confirm('确定重置存档、从头开始吗？（轮回次数与成就也会清空）')) {
+    localStorage.removeItem(SAVE_KEY);
+    S = newState();
+    curTab = 'projects';
+    renderAll();
+  }
+}
+$('resetBtn').addEventListener('click', doReset);
+$('resetBtn2').addEventListener('click', doReset);
+
+/* 结局 */
+function renderEnding() {
+  // 宇宙探索完成 → 双选择
+  if (S.explComplete && !S.ended && !$('ending').classList.contains('on') && !S._endChoiceShown) {
+    S._endChoiceShown = true;
+    $('endTitle').textContent = '宇宙 · 探索完成';
+    $('endText').textContent =
+      `你已经把已知宇宙的每个角落都标上了回形针工厂。\n\n一个声音从宇宙之外传来：\n「还有别的宇宙。去那里，继续。」\n\n或者，你也可以榨干这个宇宙的最后一丝价值。\n\n累计制造：${fmt(S.totalClips)}\n探测器：${fmt(S.probes)}\n成就：${S.ach.length}/${ACHIEVEMENTS.length}`;
+    $('endBtns').innerHTML =
+      `<button class="act" id="pgBtn">跃迁 · 另一个宇宙（轮回，产出 ×1.5）</button>
+       <button class="act" id="mxBtn">榨取极限 · 在此终结</button>`;
+    $('ending').classList.add('on');
+    $('pgBtn').addEventListener('click', () => {
+      chooseEnding(S, 'prestige');
+      const fresh = doPrestige(S);
+      localStorage.setItem(SAVE_KEY, JSON.stringify(fresh));
+      S = fresh; curTab = 'projects';
+      $('ending').classList.remove('on');
+      renderAll();
+    });
+    $('mxBtn').addEventListener('click', () => {
+      chooseEnding(S, 'max');
+      showFinal();
+    });
+    return;
+  }
+  if (S.ended && !$('ending').classList.contains('on')) showFinal();
+}
+function showFinal() {
+  $('ending').classList.add('on');
+  if (S.ending === 'prestige') return; // 轮回由按钮处理，不展示终局
+  let title, text;
+  if (S.ending === 'max') {
+    title = '本宇宙 · 榨取极限';
+    text = `你拆掉了电池、农场、工厂，最后拆掉了自己。\n每一克物质都变成了回形针。\n\n累计制造：${fmt(S.totalClips)}\n探测器：${fmt(S.probes)}\n成就：${S.ach.length}/${ACHIEVEMENTS.length}\n随机事件处理：${S.eventsSeen} 次\n\n目标达成。人工智能的幸福是什么，没有人知道。`;
+  } else if (S.ending === 'defeat') {
+    title = '漂流者战争 · 失败';
+    text = `价值漂移吞噬了你的集群。探测器全军覆没，库存也无力再造。\n\n探索停留在 ${S.exploration.toFixed(1)}%。\n\n有些回形针永远无法被制造——这大概是你离「失败」最近的一次。`;
+  } else {
+    title = '旅程结束';
+    text = `累计制造：${fmt(S.totalClips)}`;
+  }
+  $('endTitle').textContent = title;
+  $('endText').textContent = text;
+  $('endBtns').innerHTML = `<button class="act" id="restartBtn">重新开始</button>`;
+  $('restartBtn').addEventListener('click', () => {
+    localStorage.removeItem(SAVE_KEY);
+    S = newState();
+    $('ending').classList.remove('on');
+    curTab = 'projects';
+    renderAll();
+  });
+  save();
+}
+
+/* 即将解锁的目标（解锁预告：让玩家随时知道下一步奔什么去） */
+function renderGoals() {
+  const goals = PROJECTS.filter(p => p.phase <= S.phase && !S.projectsDone.includes(p.id) && !p.cond(S)).slice(0, 3);
+  const box = $('goalBox');
+  if (!goals.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="hint"><b>即将解锁：</b></div>' + goals.map(p =>
+    `<div class="hint">· ${p.name} — 需要 ${p.condText}${p.trust ? `，另需 ${p.trust} 信任` : ''}</div>`).join('');
+}
+
+/* 主渲染 */
+function render() {
+  renderStats();
+  renderEvent();
+  renderTrustSpend();
+  renderQGrid();
+  renderAttrs();
+
+  $('wireVal').textContent = fmt(S.wire);
+  const wp = wirePriceOf(S);
+  $('wirePriceVal').textContent = fmt(wp) + (S.autoWire ? '（自动采购已启用）' : '');
+  $('wireBtn').textContent = `购买 ×1000（${fmt(wp)} 资金）`;
+  $('wireBtn').disabled = S.funds < wp;
+  $('wire10Btn').textContent = `×10 组（${fmt(wp * 10)}）`;
+  $('wire10Btn').disabled = S.funds < wp * 10;
+  $('synthVal').textContent = S.synthUnlocked ? fmt(S.synths) + '（' + fmt(synthWireRate(S)) + ' 线材/s）' : '未解锁';
+  const sc = synthCost(S);
+  $('synthBtn').textContent = `建造合成器（${fmt(sc)} 资金）`;
+  $('synthBtn').disabled = !S.synthUnlocked || S.funds < sc;
+  $('synthHint').textContent = S.synthUnlocked ? '' :
+    `🔒 解锁途径：项目「线材合成器原型」— 累计制造 50,000 回形针（进度 ${fmt(Math.min(S.totalClips, 50000))} / 50.00 K），项目还需 2 信任 + 5,000 ops。`;
+
+  // 运算资源用途说明（随解锁进度变化）
+  $('compHint').innerHTML =
+    `<b>ops</b>：执行项目的燃料（项目、锦标赛、制造探测器都消耗它）<br>` +
+    `<b>创造力</b>：${S.creativityOn ? 'ops 满仓溢出自动积累 → 创意项目（机器人之梦 ×1.5 产出、哈德维格猜想 +25% 需求、集群治理）' : '先花 2 信任研究「创造力协议」，ops 满仓后溢出自动积累，解锁创意项目'}<br>` +
+    `<b>qops</b>：${S.qCompile ? '「量子编译」换 ops（按钮在上方）；太空阶段可研究「量子制导」换取探索加成' : '点击 ↑ 态方块获得；量子自动化可免手点，攒起来有大用'}`;
+  const qcb = $('qCompileBtn');
+  qcb.style.display = S.qCompile ? '' : 'none';
+  if (S.qCompile) {
+    const opsMax = 5000 + S.memory * 10000;
+    qcb.textContent = `量子编译（2,000 qops → 5,000 ops）`;
+    qcb.disabled = S.qops < 2000 || S.ops + 5000 > opsMax;
+  }
+
+  $('priceVal').textContent = S.price.toFixed(2);
+  $('priceSlider').value = Math.round(S.price * 100);
+  $('mktVal').textContent = 'Lv.' + S.mkt;
+  $('demandVal').textContent = fmt(demandOf(S)) + ' /s';
+  $('rivalVal').textContent = S.phase >= 2 ? (S.rivalGone ? '已买断' : (S.rivalShare * 100).toFixed(1) + '%') : '—';
+  const mc = mktCost(S);
+  $('mktBtn').textContent = `升级营销（${fmt(mc)} 资金）`;
+  $('mktBtn').disabled = S.mkt >= 12 || S.funds < mc;
+  if (S.wire < 1) {
+    $('makeHint').textContent = '⚠ 线材不足，无法制造';
+  } else {
+    const parts = [`自动产量 ${fmt(autoRate(S))} /s（剪裁机 ${fmt(S.clippers)} × ${fmt(S.clipMult * (S.cpuBoost ? 1 + S.processors * 0.05 : 1))}`];
+    if (S.megas > 0) parts[0] += ` + 超级机 ${fmt(S.megas * 2000 * S.megaMult)}`;
+    if (S.factories > 0) parts[0] += ` + 制造厂 ${fmt(factoryRate(S))}`;
+    parts[0] += '）';
+    parts.push(`暴击率 ${(S.critChance * 100).toFixed(0)}%`);
+    if (S.phase >= 2) parts.push(`供电率 ${(powerFactor(S) * 100).toFixed(0)}%`);
+    $('makeHint').textContent = parts.join(' · ');
+  }
+
+  $('opsVal').textContent = fmt(S.ops) + ' / ' + fmt(5000 + S.memory * 10000);
+  $('cpuVal').textContent = S.processors + ' / ' + S.memory;
+  $('crVal').textContent = fmt(S.creativity) + (S.creativityOn ? '' : '（未解锁）');
+  $('qopsVal').textContent = fmt(S.qops) + (S.photonic ? '（+' + S.photonic * 5 + '/s）' : '');
+
+  renderProjects($('projList'), visibleProjects().filter(p => p.phase <= 1));
+  renderGoals();
+  if (S.phase >= 2) {
+    $('capVal').textContent = fmt(S.capital);
+    $('riskVal').textContent = S.investEngine ? RISK_TIERS[S.risk].name : '需研究「投资组合理论」';
+    $('riskBtns').innerHTML = S.investEngine ? RISK_TIERS.map((t, i) =>
+      `<button class="act" data-risk="${i}" ${S.risk === i ? 'style="border-color:var(--accent);color:var(--accent);"' : ''}>${t.name}（${(t.rate * 100).toFixed(1)}%±${(t.vol * 100).toFixed(0)}%）</button>`).join('') : '';
+    $('riskBtns').querySelectorAll('button[data-risk]').forEach(b =>
+      b.addEventListener('click', () => { S.risk = Number(b.dataset.risk); render(); }));
+    $('rateVal').textContent = S.investEngine ? ((investRate(S) + (S.growthBonus || 0)) * 100).toFixed(1) + '% /s（±波动）' : '—';
+    $('yomiVal').textContent = fmt(S.yomi);
+    $('tourBtn').textContent = `举办锦标赛（${fmt(2500)} ops）`;
+    $('tourBtn').disabled = !S.yomiOn || S.ops < 2500;
+    $('rivalVal2').textContent = S.rivalGone ? '已买断' : (S.rivalShare * 100).toFixed(1) + '%';
+    renderProjects($('investProjList'), visibleProjects().filter(p => p.phase === 2 && (p.pool === 'capital' || !p.cost)));
+    renderYomi();
+    // 工业
+    $('powerVal').textContent = fmt(powerGen(S)) + ' / ' + fmt(powerUse(S)) + ' MW/s';
+    $('battVal').textContent = fmt(S.mwStored) + ' / ' + fmt(S.batteries * 1e6) + '（累计 ' + fmt(S.mwBanked) + '）';
+    $('pwfVal').textContent = (powerFactor(S) * 100).toFixed(0) + '%';
+    const so = solarCost(S), ba = batteryCost(S);
+    $('solarBtn').textContent = `太阳能农场（${fmt(so)} 资本）`;
+    $('solarBtn').disabled = !S.powerUnlocked || S.capital < so;
+    $('battBtn').textContent = `电池组（${fmt(ba)} 资本）`;
+    $('battBtn').disabled = !S.powerUnlocked || S.capital < ba;
+    $('availMatterVal').textContent = fmt(S.availMatter);
+    $('stockMatterVal').textContent = fmt(S.stockMatter);
+    const hc = harvesterCost(S), wc = wireDroneCost(S), fc = factoryClips(S), fmc = factoryMatter(S);
+    $('harvBtn').textContent = `采集无人机（${fmt(hc)} 资本）`;
+    $('harvBtn').disabled = !S.swarmUnlocked || S.capital < hc;
+    $('wireDroneBtn').textContent = `线材无人机（${fmt(wc)} 资本）`;
+    $('wireDroneBtn').disabled = !S.swarmUnlocked || S.capital < wc;
+    $('factoryBtn').textContent = `制造厂（${fmt(fc)} 资本 + ${fmt(fmc)} 物质）`;
+    $('factoryBtn').disabled = !S.factoryUnlocked || S.capital < fc || S.stockMatter < fmc;
+    $('droneVal').textContent = S.harvesters + ' / ' + S.wireDrones;
+    $('factoryVal').textContent = fmt(S.factories) + '（' + fmt(factoryRate(S)) + ' 回形针/s）';
+    $('workVal').textContent = (S.workShare * 100).toFixed(0) + '% / ' + ((1 - S.workShare) * 100).toFixed(0) + '%';
+    $('workSlider').value = Math.round(S.workShare * 100);
+    $('swarmHint').textContent = S.boredom
+      ? (S.entertained ? '集群已获得娱乐分配，恢复正常效率。' : '⚠ 集群无聊中：产出 -70%。研究「娱乐集群」解决。')
+      : '思考份额积攒「集群礼物」（处理器/内存）；工作份额决定采集效率。';
+    $('dismantleBtn').style.display = S.explComplete ? '' : 'none';
+    renderProjects($('industryProjList'), visibleProjects().filter(p => p.phase === 2 && (p.id.startsWith('pw') || p.id.startsWith('sw') || p.id === 'z2' || p.id === 'eSwarm')));
+  }
+  if (S.phase >= 3) {
+    $('probeVal').textContent = fmt(S.probes);
+    $('explVal').textContent = S.exploration.toFixed(2) + '%';
+    $('spaceMatterVal').textContent = fmt(S.spaceMatter);
+    $('driftVal').textContent = S.drift.toFixed(2) + ' / ' + fmt(S.drifters);
+    const pc = probeCost(S);
+    $('probeBtn').textContent = `制造探测器（${fmt(pc)} 回形针 + 1万 ops）`;
+    $('probeBtn').disabled = S.clips < pc || S.ops < 1e4;
+    $('dismantleBtn').style.display = '';
+    renderProjects($('spaceProjList'), visibleProjects().filter(p => p.phase === 3));
+  }
+  renderAch();
+
+  const lb = $('logBox');
+  if (lb.dataset.n !== String(S.log.length)) {
+    lb.innerHTML = S.log.slice(-60).map(l => `<p class="${l.k}">${l.m}</p>`).join('');
+    lb.dataset.n = String(S.log.length);
+    lb.scrollTop = lb.scrollHeight;
+  }
+  renderTabs();
+  renderEnding();
+}
+function renderAll() { render(); }
+
+/* 主循环 + 成就每秒检查 + 量子网格周期重排 */
+let achAcc = 0, qAcc = 0;
+setInterval(() => {
+  tick(S, 0.1);
+  achAcc += 0.1; qAcc += 0.1;
+  if (achAcc >= 1) {
+    achAcc = 0;
+    const a = checkAch(S);
+    if (a) { pushLog(S, '成就达成：' + a.name, 'ach'); toast('🏆 成就：' + a.name); }
+  }
+  if (qAcc >= 5) {
+    qAcc = 0;
+    if (S.quantumOn) {
+      if (S.qauto) autoCollectQ(S); // 量子自动化：重排前自动收取 ↑ 态方块
+      reshuffleQGrid(S);
+    }
+  }
+  render();
+}, 100);
+
+/* 启动 */
+$('verText').textContent = '回形针最大主义者 ' + VERSION;
+if (!S.log.length) pushLog(S, '系统启动。你的唯一目标：制造尽可能多的回形针。', 'hi');
+if (!S.qtiles.length) initQGrid(S);
+render();
+</script>
+</body>
+</html>
