@@ -348,7 +348,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v4.0 · 2026-11-26 23:45 构建';
+const VERSION = 'v4.1 · 2026-11-26 23:55 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 function fmt(n) {
@@ -1599,13 +1599,60 @@ function fmtEta(sec) {
   if (sec < 3600) return Math.ceil(sec / 60) + ' 分钟';
   return (sec / 3600).toFixed(1) + ' 小时';
 }
-/* 逐条件进度：[{label, cur, max, unit}]，cur/max 为 null 表示不可量化（如「拥有 1 个处理器」） */
+/* 解锁门槛进度：与项目「研究成本」分开显示。
+   格式 [标签, 当前值字段/取值函数, 目标值/取值函数, 速率类型]；
+   'money' 走 moneyOf（P1 funds / P2 capital），'clips' 速率用 autoRate。
+   v4.1：此前只显示 ops/信任/研究消耗，cond 里的「累计制造」等门槛缺失，
+   导致进度条全满却仍未解锁的错觉——这里把所有可量化门槛都列出来。 */
+const GATE_MAP = {
+  p1: [['累计制造', 'totalClips', 100, 'clips']],
+  p2: [['处理器', 'processors', 1, null]],
+  p3: [['处理器', 'processors', 1, null]],
+  p4: [['累计制造', 'totalClips', 2000, 'clips']],
+  p5: [['资金', 'money', 1500, null]],
+  x1: [['手工点击', 'totalClicks', 100, null]],
+  x2: [['累计制造', 'totalClips', 10000, 'clips']],
+  x3: [['累计制造', 'totalClips', 50000, 'clips']],
+  p6: [['创造力', 'creativity', 25, null]],
+  p7: [['创造力', 'creativity', 60, null]],
+  x5: [['处理器', 'processors', 3, null]],
+  p8: [['累计制造', 'totalClips', 80000, 'clips']],
+  p9: [['资金', 'money', 15000, null]],
+  x4: [['资金', 'money', 40000, null]],
+  p10: [['累计信任', 'trustEver', 15, null], ['累计制造', 'totalClips', 200000, 'clips']],
+  p11: [['累计制造', 'totalClips', 500000, 'clips']],
+  pO1: [['处理器', 'processors', 2, null]],
+  pO2: [['累计制造', 'totalClips', 15000, 'clips']],
+  qC: [['累计 qops', s => s.qopsEver || 0, 2000, null]],
+  y1: [['资本', 'capital', 50000, null]],
+  s2: [['资本', 'capital', 8000, null]],
+  y2: [['资本', 'capital', 150000, null]],
+  s3: [['资本', 'capital', () => megaCost(S), null]],
+  s4: [['资本', 'capital', 300000, null]],
+  y3: [['资本', 'capital', 500000, null], ['对手份额 %', s => s.rivalShare * 100, 2, null]],
+  pw2: [['太阳能农场', 'solarFarms', 10, null]],
+  t1: [['探测器', 'probes', 50, null]],
+  t2: [['探测器', 'probes', 1000, null]],
+  tq: [['探索度', 'exploration', 10, null]],
+  z1: [['探索度', 'exploration', 50, null]],
+  t3: [['探测器', 'probes', 10000, null]],
+  z3: [['探索度', 'exploration', 80, null]],
+  z4: [['价值漂移', 'drift', 0.05, null]],
+};
 function goalProgress(p) {
   const rows = [];
   if (p.ops) rows.push({ label: 'ops', cur: S.ops, max: p.ops, rate: S.processors * 25 * S.cpuMult * S.prestigeMult });
-  if (p.clips) rows.push({ label: '回形针', cur: S.clips, max: p.clips, rate: autoRate(S) });
-  if (p.creativity) rows.push({ label: '创造力', cur: S.creativity, max: p.creativity, rate: S.processors * 25 * S.cpuMult * 0.15 });
-  if (p.trust) rows.push({ label: '信任', cur: S.trust, max: p.trust, rate: null });
+  if (p.clips) rows.push({ label: '回形针（研究消耗）', cur: S.clips, max: p.clips, rate: autoRate(S) });
+  if (p.creativity) rows.push({ label: '创造力（研究消耗）', cur: S.creativity, max: p.creativity, rate: S.processors * 25 * S.cpuMult * 0.15 });
+  if (p.trust) rows.push({ label: '信任（研究消耗）', cur: S.trust, max: p.trust, rate: null });
+  // 解锁门槛（cond 里的数值条件），与研究成本并列展示
+  (GATE_MAP[p.id] || []).forEach(([label, key, max, rateKind]) => {
+    const cur = key === 'money' ? moneyOf(S) : (typeof key === 'function' ? key(S) : S[key]);
+    const goal = typeof max === 'function' ? max(S) : max;
+    const rate = rateKind === 'clips' ? autoRate(S)
+      : rateKind === 'ops' ? S.processors * 25 * S.cpuMult * S.prestigeMult : null;
+    rows.push({ label, cur, max: goal, rate });
+  });
   // s5 专项：电池累计充入（真正的瓶颈）
   if (p.id === 's5') rows.push({ label: '电池累计充入 MWs', cur: S.mwBanked, max: 1e7, rate: Math.max(0.01, powerGen(S) - powerUse(S)) });
   return rows;
@@ -1618,7 +1665,9 @@ function renderGoals() {
   // 旧阶段遗留的未解锁小项目不再挤占前 3，否则 P2 最关键的「电池累计」瓶颈永远看不见。
   const scored = cand.map(p => {
     const rows = goalProgress(p);
-    const prog = rows.length ? Math.max(...rows.map(r => Math.min(1, r.cur / r.max))) : 0;
+    // 用平均完成度而非最大值：否则「信任已满」单项就能把项目误判成 100%，
+    // 真正只差累计制造的项目反而排不进前 3（玩家看不到最接近解锁的那个）。
+    const prog = rows.length ? rows.reduce((a, r) => a + Math.min(1, r.cur / r.max), 0) / rows.length : 0;
     return { p, rows, prog };
   }).sort((a, b) => (b.p.pin ? 1 : 0) - (a.p.pin ? 1 : 0) || (b.p.phase - a.p.phase) || (b.prog - a.prog)).slice(0, 3);
   setHTML(box, '<div class="hint"><b>即将解锁：</b></div>' + scored.map(({ p, rows }) => {
