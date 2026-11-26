@@ -177,6 +177,7 @@
         <button class="act" id="wireBtn">购买 ×1000</button>
         <button class="act" id="wire10Btn">×10 组</button>
         <button class="act" id="begBtn">乞求线材（信任）</button>
+        <button class="act" id="autoWireBtn" style="display:none;">自动采购：开</button>
       </div>
       <div class="row" style="margin-top:6px;"><span class="k">合成器</span><span class="v" id="synthVal">0</span></div>
       <button class="act" id="synthBtn">建造合成器</button>
@@ -189,6 +190,7 @@
       <input type="range" id="priceSlider" min="1" max="200" value="25">
       <div class="row"><span class="k">营销等级</span><span class="v" id="mktVal"></span></div>
       <div class="row"><span class="k">预计销量</span><span class="v" id="demandVal"></span></div>
+      <div class="hint" id="mktHint"></div>
       <div class="row"><span class="k">对手份额</span><span class="v" id="rivalVal">—</span></div>
       <button class="act" id="mktBtn">升级营销</button>
     </div>
@@ -301,7 +303,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v3.3 · 2026-11-26 15:50 构建';
+const VERSION = 'v3.4 · 2026-11-26 16:00 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
 
 function fmt(n) {
@@ -319,7 +321,7 @@ function newState() {
     runs: 0, prestigeMult: 1,
     time: 0,
     clips: 0, totalClips: 0, totalSold: 0, totalClicks: 0, crits: 0, critChance: 0.02,
-    wire: 100, wireMult: 1, wireBought: 0, autoWire: false,
+    wire: 100, wireMult: 1, wireBought: 0, autoWire: false, autoWirePref: true, bailoutOnce: false,
     funds: 0, price: 0.25, mkt: 1, demandMult: 1,
     clippers: 0, clipMult: 1, clipperGrowth: 1.10,
     synths: 0, synthUnlocked: false, synthCostN: 0,
@@ -839,8 +841,18 @@ function tick(s, dt) {
   s.qops = (s.qops || 0) + s.photonic * 5 * dt;
   s.qopsEver = (s.qopsEver || 0) + s.photonic * 5 * dt;
 
-  // 2. 自动购线
-  if (s.autoWire && s.wire < 200) buyWire(s, 1);
+  // 2. 自动购线（只在低价位买，且保留运营资金；可手动关闭）
+  if (s.autoWire && s.autoWirePref !== false && s.wire < 200) {
+    const wp = wirePriceOf(s);
+    if (wp <= 13 * s.wireMult && s.funds >= wp * 3) buyWire(s, 1);
+  }
+  // 2b. 应急变现兜底：资金、线材、库存三空时防止永久卡死
+  if (s.funds < 1 && s.wire < 1 && s.clips < 1) {
+    s.funds += 2 * dt;
+    if (!s.bailoutOnce) { s.bailoutOnce = true; }
+  } else if (s.funds > 50 || s.wire > 10 || s.clips > 10) {
+    s.bailoutOnce = false;
+  }
 
   // 3. 合成器产线材（耗资金）
   if (s.synths > 0) {
@@ -1143,6 +1155,7 @@ $('wireBtn').addEventListener('click', () => { buyWire(S, 1); render(); });
 $('clipperBtn').addEventListener('click', () => { buyClipper(S); render(); });
 $('wire10Btn').addEventListener('click', () => { buyWire(S, 10); render(); });
 $('begBtn').addEventListener('click', () => { if (spendTrust(S, 'begwire')) toast('人类同情了你：+5000 线材'); render(); });
+$('autoWireBtn').addEventListener('click', () => { S.autoWirePref = S.autoWirePref === false; toast(S.autoWirePref !== false ? '自动采购已开启：只在低价位且资金充裕时购入' : '自动采购已关闭'); render(); });
 $('synthBtn').addEventListener('click', () => { buySynth(S); render(); });
 $('priceSlider').addEventListener('input', e => { S.price = Number(e.target.value) / 100; });
 $('mktBtn').addEventListener('click', () => { buyMkt(S); render(); });
@@ -1371,7 +1384,12 @@ function render() {
 
   $('wireVal').textContent = fmt(S.wire);
   const wp = wirePriceOf(S);
-  $('wirePriceVal').textContent = fmt(wp) + (S.autoWire ? '（自动采购已启用）' : '');
+  $('wirePriceVal').textContent = fmt(wp);
+  const awb = $('autoWireBtn');
+  awb.style.display = S.autoWire ? '' : 'none';
+  awb.textContent = S.autoWirePref !== false ? '自动采购：开' : '自动采购：关';
+  awb.style.borderColor = S.autoWirePref !== false ? 'var(--accent)' : '';
+  awb.style.color = S.autoWirePref !== false ? 'var(--accent)' : 'var(--dim)';
   $('wireBtn').textContent = `购买 ×1000（${fmt(wp)} 资金）`;
   $('wireBtn').disabled = S.funds < wp;
   $('wire10Btn').textContent = `×10 组（${fmt(wp * 10)}）`;
@@ -1406,6 +1424,11 @@ function render() {
   $('priceSlider').value = Math.round(S.price * 100);
   $('mktVal').textContent = 'Lv.' + S.mkt;
   $('demandVal').textContent = fmt(demandOf(S)) + ' /s';
+  // 库存滞销提示：有货卖不动时引导降价
+  const dem = demandOf(S);
+  $('mktHint').textContent = (S.clips > 50 && dem < 0.5)
+    ? `⚠ 库存 ${fmt(S.clips)} 个滞销：需求与售价平方成反比，把滑杆往左拉（建议 ≤ ${Math.max(1, Math.round(Math.sqrt(S.mkt * 2 * S.demandMult / 0.5)))}）即可出货换资金。`
+    : '';
   $('rivalVal').textContent = S.phase >= 2 ? (S.rivalGone ? '已买断' : (S.rivalShare * 100).toFixed(1) + '%') : '—';
   const mc = mktCost(S);
   $('mktBtn').textContent = `升级营销（${fmt(mc)} 资金）`;
