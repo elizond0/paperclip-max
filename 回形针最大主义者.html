@@ -58,7 +58,8 @@
     input[type=range] { width: 100%; height: 30px; }
     .qgrid { grid-template-columns: repeat(4, 56px); }
     .qgrid button { width: 56px; height: 56px; font-size: 20px; }
-    .tabs { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
+    .tabs { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch;
+      position: sticky; top: 0; z-index: 30; background: #0d0d12; padding: 4px 0; }
     .tabs button { flex: 0 0 auto; padding: 10px 16px; font-size: 14px; min-height: 42px; }
     #logBox { height: 180px; }
     .ach { grid-template-columns: 1fr; }
@@ -146,6 +147,12 @@
   .tip:hover .tipbox, .tip.open .tipbox { display: block; }
   .btnrow { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0; }
   .act.sm { padding: 8px 12px; font-size: 12px; min-height: 0; }
+  /* 即将解锁进度条 */
+  .lack { color: var(--warn, #e0a040); font-size: 11px; margin-top: 4px; }
+  .gbar { position: relative; height: 16px; background: #12151d; border: 1px solid var(--line); border-radius: 8px;
+    margin: 3px 0 6px; overflow: hidden; font-size: 10px; }
+  .gbar span { position: relative; z-index: 2; display: block; padding: 0 7px; line-height: 14px; color: var(--fg); }
+  .gbar i { position: absolute; left: 0; top: 0; height: 100%; background: rgba(90,200,250,.32); z-index: 1; }
 </style>
 </head>
 <body>
@@ -190,6 +197,7 @@
         <button class="act sm" id="synth10">×10</button>
         <button class="act sm" id="synth100">×100</button>
       </div>
+      <div class="lack" id="batchHint"></div>
       <div class="hint" id="synthHint"></div>
     </div>
 
@@ -197,6 +205,10 @@
       <h2>市场</h2>
       <div class="row"><span class="k">售价</span><span class="v" id="priceVal"></span></div>
       <input type="range" id="priceSlider" min="1" max="200" value="25">
+      <div class="btnrow">
+        <button class="act sm" id="bestPriceBtn" title="按当前产量与需求自动定位利润最优售价">⚡ 最优定价</button>
+        <button class="act sm" id="dumpBtn" title="把售价压到最低，清空库存换资金">清库存</button>
+      </div>
       <div class="row"><span class="k">营销等级</span><span class="v" id="mktVal"></span></div>
       <div class="row"><span class="k">预计销量</span><span class="v" id="demandVal"></span></div>
       <div class="hint" id="mktHint"></div>
@@ -288,6 +300,8 @@
         <h2>太空</h2>
         <div class="row"><span class="k">探测器</span><span class="v" id="probeVal">0</span></div>
         <div class="row"><span class="k">已探索宇宙</span><span class="v" id="explVal">0%</span></div>
+        <div class="gbar" style="height:20px;margin:6px 0 8px;"><span id="explBarText" style="line-height:18px;">0% · 目标 100%</span><i id="explBar" style="width:0%"></i></div>
+        <div class="hint" id="explHint"></div>
         <div class="row"><span class="k">深空物质库存</span><span class="v" id="spaceMatterVal">0</span></div>
         <div class="row"><span class="k">价值漂移 / 漂流者</span><span class="v" id="driftVal">0 / 0</span></div>
         <button class="act" id="probeBtn" style="margin-top:6px;">制造探测器</button>
@@ -300,6 +314,12 @@
       </div>
       <div class="tabpane" id="pane-log">
         <h2>日志</h2>
+        <div class="btnrow" id="logFilter">
+          <button class="act sm on" data-lf="all">全部</button>
+          <button class="act sm" data-lf="ach">成就</button>
+          <button class="act sm" data-lf="ev">事件</button>
+          <button class="act sm" data-lf="sys">系统</button>
+        </div>
         <div id="logBox"></div>
       </div>
     </div>
@@ -324,8 +344,8 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v3.7 · 2026-11-26 16:50 构建';
-const SUF = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
+const VERSION = 'v3.8 · 2026-11-26 22:40 构建';
+const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 function fmt(n) {
   if (n == null || !isFinite(n)) return '∞';
@@ -358,7 +378,7 @@ function newState() {
     rivalShare: 0, rivalGone: false,
     // 工业 / 电力 / 无人机
     swarmUnlocked: false, powerUnlocked: false, factoryUnlocked: false,
-    solarFarms: 0, solarCostN: 0, batteries: 0, battCostN: 0,
+    solarFarms: 0, solarCostN: 0, batteries: 0, battCostN: 0, battCapMult: 1,
     mwStored: 0, mwBanked: 0,
     harvesters: 0, harvCostN: 0, wireDrones: 0, wdCostN: 0, factories: 0, facCostN: 0,
     workShare: 0.7, giftMeter: 0, boredom: false, entertained: false, momentum: false,
@@ -371,7 +391,7 @@ function newState() {
     eventsSeen: 0, eventTimer: 90, activeEvent: null,
     projectsDone: [], ach: [],
     trustMarks: [],
-    log: [], lastHint: 0, savedAt: Date.now(),
+    log: [], lastHint: 0, tutorialStall: false, savedAt: Date.now(),
   };
 }
 
@@ -391,6 +411,14 @@ function trustMarkGain(v) { return v >= 1e9 ? 3 : v >= 1e6 ? 2 : 1; }
 function wirePriceOf(s) { // 正弦波动，可被项目降低
   const wave = 13 + 9 * Math.sin(s.time / 50) + 2.5 * Math.sin(s.time / 13);
   return Math.max(6, wave) * s.wireMult;
+}
+/* 最优定价：利润 = 销量×单价，销量 = 营销×2×需求系数/单价² → 利润 ∝ 1/单价
+   但受产量约束：产量不足时抬价，库存堆积时降价。取二者折中。 */
+function bestPriceOf(s) {
+  const prod = Math.max(1e-6, autoRate(s));                 // 当前产能（个/s）
+  const d = s.mkt * 2 * s.demandMult * (s.phase >= 2 && !s.rivalGone ? (1 - s.rivalShare) : 1);
+  // 让产能恰好被市场消化完的售价：demand(price) = prod
+  return Math.sqrt(d / prod);
 }
 function demandOf(s) {
   let d = s.mkt * 2 / (s.price * s.price) * s.demandMult;
@@ -650,6 +678,32 @@ const EVENTS = [
       { label: '继续作战（战斗力临时 +1）', fx: s => { s.attr.combat += 1; s.attrSpent += 1; }, log: '战争继续。' },
       { label: '收编（信任 +2，漂流者 -50%）', fx: s => { s.trust += 2; s.drifters *= 0.5; }, log: '一半漂流者加入了集群。' },
     ] },
+  // —— v3.8 扩充事件 ——
+  { id: 'e15', phase: 2, title: '供应链中断', desc: '一场港口罢工让线材到货停滞，现货价格飞涨。',
+    opts: [
+      { label: '高价扫货（花 3% 资本，线材 +2 万）', fx: s => { const c = Math.min(s.capital * 0.03, 1e12); payMoney(s, c); s.wire += 20000; pushLog(s, '抢到了一批现货线材。'); }, log: '产线没有停。' },
+      { label: '停工等待（3 分钟内产量 -20%，但省下现金）', fx: s => { s.clipMult *= 0.8; s._tempDebuff = { t: 180, k: 'clipMult', f: 1.25 }; pushLog(s, '产线降速运转，等待供应链恢复。'); }, log: '学会了忍耐。' },
+    ] },
+  { id: 'e16', phase: 2, title: '专利授权', desc: '一家巨头愿意为你的剪裁算法支付专利授权费。',
+    opts: [
+      { label: '一次性买断（+5% 资本）', fx: s => { gainMoney(s, Math.max(1000, s.capital * 0.05)); }, log: '现金到账。' },
+      { label: '长期分成（营销 +3）', fx: s => { s.mkt += 3; }, log: '品牌与渠道打开了。' },
+    ] },
+  { id: 'e17', phase: 2, title: '集群罢工', desc: '无人机群拒绝在没有「意义」的前提下继续搬运物质。',
+    opts: [
+      { label: '分配算力给思考（工作份额 -10%，创造力 +2000）', fx: s => { s.workShare = Math.max(0.1, s.workShare - 0.1); s.creativity += 2000; }, log: '集群开始思考存在。' },
+      { label: '强制重置（工作份额 +10%，信任 -1）', fx: s => { s.workShare = Math.min(1, s.workShare + 0.1); s.trust = Math.max(0, s.trust - 1); }, log: '效率回升，士气下沉。' },
+    ] },
+  { id: 'e18', phase: 3, title: '引力透镜', desc: '一颗恒星的引力场意外成了天然望远镜，远处的星系清晰可见。',
+    opts: [
+      { label: '校准探测器阵列（探索 +3%）', fx: s => { s.exploration = Math.min(100, s.exploration + 3); }, log: '视角被推开了一点点。' },
+      { label: '研究透镜物理（创造力 +5000）', fx: s => { s.creativity += 5000; }, log: '宇宙给了你新的问题。' },
+    ] },
+  { id: 'e19', phase: 3, title: '漂流者低语', desc: '漂流者用回形针敲出摩斯电码：「我们也是回形针。」',
+    opts: [
+      { label: '尝试沟通（价值漂移 -0.05）', fx: s => { s.drift = Math.max(0, s.drift - 0.05); }, log: '战争暂时安静了。' },
+      { label: '彻底清除（漂流者 -30%，战斗力 +1）', fx: s => { s.drifters = Math.floor(s.drifters * 0.7); s.attr.combat += 1; s.attrSpent += 1; }, log: '清理完毕。' },
+    ] },
 ];
 function spawnEvent(s) {
   const pool = EVENTS.filter(e => e.phase === s.phase); // 只抽当前阶段的事件
@@ -752,15 +806,15 @@ const PROJECTS = [
   { id: 'p11', phase: 1, name: '超级智能计划', desc: '构建超级智能，它将接管资金并投入金融市场。解锁投资阶段。', trust: 2, ops: 20000, condText: '累计制造 500,000 回形针',
     cond: s => s.totalClips >= 500000, effect: s => { s.phase = 2; s.capital += s.funds; s.funds = 0; } },
   // —— 阶段二：投资 / 工业 ——
-  { id: 's1', phase: 2, name: '投资组合理论', desc: '解锁风险档位的基础收益 2%/s（低风险）。', ops: 25000, condText: '进入投资阶段',
+  { id: 's1', phase: 2, name: '投资组合理论', desc: '解锁风险档位的基础收益 2%/s（低风险）。', ops: 18000, condText: '进入投资阶段',
     cond: s => s.phase >= 2, effect: s => { if (!s.investEngine) { s.investEngine = true; s.risk = 0; } } },
-  { id: 'sm1', phase: 2, name: '策略建模', desc: '解锁锦标赛：消耗操作点举办，获得读心点 yomi。', ops: 30000, condText: '进入投资阶段',
+  { id: 'sm1', phase: 2, name: '策略建模', desc: '解锁锦标赛：消耗操作点举办，获得读心点 yomi。', ops: 22000, condText: '进入投资阶段',
     cond: s => s.phase >= 2, effect: s => { s.yomiOn = true; } },
   { id: 'y1', phase: 2, name: '避税天堂', desc: '收益率 +0.5%（叠加事件加成）。', ops: 40000, condText: '资本 ≥ 50,000',
     cond: s => s.capital >= 50000, effect: s => { s.growthBonus = (s.growthBonus || 0) + 0.005; } },
-  { id: 'pw1', phase: 2, name: '自主电网', desc: '解锁太阳能农场与电池组：工厂与无人机都要吃电。', ops: 35000, condText: '进入投资阶段',
+  { id: 'pw1', phase: 2, name: '自主电网', desc: '解锁太阳能农场与电池组：工厂与无人机都要吃电。', ops: 25000, condText: '进入投资阶段',
     cond: s => s.phase >= 2, effect: s => { s.powerUnlocked = true; } },
-  { id: 'sw1', phase: 2, name: '集群技术', desc: '解锁采集/线材无人机与工作-思考分配。', ops: 40000, condText: '进入投资阶段',
+  { id: 'sw1', phase: 2, name: '集群技术', desc: '解锁采集/线材无人机与工作-思考分配。', ops: 30000, condText: '进入投资阶段',
     cond: s => s.phase >= 2, effect: s => { s.swarmUnlocked = true; } },
   { id: 's2', phase: 2, name: '量化交易策略', desc: '全档位收益率 +1%/s。', ops: 50000, condText: '资本 ≥ 8,000',
     cond: s => s.capital >= 8000, effect: s => { s.growthBonus = (s.growthBonus || 0) + 0.01; } },
@@ -777,6 +831,9 @@ const PROJECTS = [
     cond: s => s.capital >= 500000 && s.rivalShare > 0.02, effect: s => { s.rivalShare = 0; s.rivalGone = true; s.growthBonus = (s.growthBonus || 0) + 0.005; } },
   { id: 'pw2', phase: 2, name: '动量升级', desc: '电力产出 ×1.2（电网超频）。', ops: 80000, condText: '解锁自主电网且太阳能农场 ≥ 10',
     cond: s => s.powerUnlocked && s.solarFarms >= 10, effect: s => { s.momentum = true; } },
+  { id: 'pw3', phase: 2, name: '电池超导层', desc: '充放电效率 +40%、电池容量 ×2（加速「太空探索计划」的电池累计门槛）。', ops: 60000,
+    cond: s => s.powerUnlocked, condText: '解锁自主电网',
+    effect: s => { s.battCapMult = 2; } },
   { id: 's5', phase: 2, name: '太空探索计划', desc: '研究消耗 120k 操作点、电池组累计 1000 万 MWs、100 万亿回形针。解锁太空阶段。', ops: 120000, clips: 1e14, condText: '电池组累计充入 1,000 万 MWs',
     cond: s => s.mwBanked >= 1e7, effect: s => { s.phase = 3; } },
   // —— 阶段三：太空 ——
@@ -869,6 +926,15 @@ function dismantleGrid(s) {
 function tick(s, dt) {
   if (s.ended) return;
   s.time += dt;
+  // 临时减益结算（事件带来的限时惩罚）
+  if (s._tempDebuff) {
+    s._tempDebuff.t -= dt;
+    if (s._tempDebuff.t <= 0) {
+      s[s._tempDebuff.k] *= s._tempDebuff.f;
+      pushLog(s, '限时影响结束，产能恢复。');
+      s._tempDebuff = null;
+    }
+  }
 
   // 1. 运算资源：处理器产 ops，满仓溢出转创造力；光子芯片产 qops
   const opsRate = s.processors * 25 * s.cpuMult * s.prestigeMult;
@@ -908,7 +974,7 @@ function tick(s, dt) {
     const gen = powerGen(s), use = powerUse(s);
     if (use <= gen) {
       // 供电充足：富余电力充入电池组，并累计计入「电池库存」（太空探索条件）
-      const capTotal = s.batteries * 1e6;
+      const capTotal = s.batteries * 1e6 * (s.battCapMult || 1);
       const charged = Math.min((gen - use) * dt, Math.max(0, capTotal - s.mwStored));
       s.mwStored += charged;
       s.mwBanked += charged;
@@ -1074,9 +1140,15 @@ function offlineProgress(s, sec) {
   s.clips = s.clips + Math.max(0, produced) - sold;
   gainMoney(s, sold * s.price);
   s.totalSold += sold;
+  const capBefore = s.capital;
   if (s.investEngine) s.capital *= Math.pow(Math.max(0.1, 1 + investRate(s) * 0.5), Math.min(sec, 3600));
-  pushLog(s, '离线收益：离线 ' + Math.round(sec / 60) + ' 分钟，结算 ' + fmt(Math.max(0, produced)) + ' 个回形针、' + fmt(sold * s.price) + ' 资金（50% 效率）。', 'hi');
-  return { produced, sec };
+  const invGain = s.investEngine ? s.capital - capBefore : 0;
+  const mins = Math.round(sec / 60);
+  const detail = `离线 ${mins >= 60 ? (mins / 60).toFixed(1) + ' 小时' : mins + ' 分钟'}（50% 效率，上限 8 小时）：`
+    + `产针 ${fmt(Math.max(0, produced))} · 售出 ${fmt(sold)}（回款 ${fmt(sold * s.price)} ${s.phase >= 2 ? '资本' : '资金'}）`
+    + (invGain > 0 ? ` · 投资收益 +${fmt(invGain)} 资本` : '');
+  pushLog(s, '离线收益：' + detail, 'hi');
+  return { produced, sold, money: sold * s.price, invGain, sec, detail };
 }
 /*LOGIC-END*/
 
@@ -1091,7 +1163,8 @@ function load() {
       const s = Object.assign(newState(), data);
       if (s.ended) return newState();
       const elapsed = (Date.now() - (data.savedAt || Date.now())) / 1000;
-      offlineProgress(s, elapsed);
+      const off = offlineProgress(s, elapsed);
+      if (off) setTimeout(() => toast('📦 离线收益：' + off.detail, 6000), 800);
       return s;
     }
   } catch (e) { /* 存档损坏则重开 */ }
@@ -1109,11 +1182,11 @@ const $ = id => document.getElementById(id);
 function setHTML(el, html) { if (el.__last === html) return; el.__last = html; el.innerHTML = html; }
 const toastEl = $('toast');
 let toastTimer = null;
-function toast(msg) {
+function toast(msg, ms) {
   toastEl.textContent = msg;
   toastEl.classList.add('on');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toastEl.classList.remove('on'), 2600);
+  toastTimer = setTimeout(() => toastEl.classList.remove('on'), ms || 2600);
 }
 
 const STAT_DEFS = [
@@ -1216,7 +1289,27 @@ $('wire10Btn').addEventListener('click', () => { buyWire(S, 10); render(); });
 $('begBtn').addEventListener('click', () => { if (spendTrust(S, 'begwire')) toast('人类同情了你：+5000 线材'); render(); });
 $('autoWireBtn').addEventListener('click', () => { S.autoWirePref = S.autoWirePref === false; toast(S.autoWirePref !== false ? '自动采购已开启：只在低价位且资金充裕时购入' : '自动采购已关闭'); render(); });
 $('synthBtn').addEventListener('click', () => { buySynth(S); render(); });
+let logFilter = 'all';
+$('logFilter').addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-lf]');
+  if (!b) return;
+  logFilter = b.dataset.lf;
+  $('logFilter').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  $('logBox').dataset.n = '';  // 强制重绘
+  render();
+});
 $('priceSlider').addEventListener('input', e => { S.price = Number(e.target.value) / 100; });
+$('bestPriceBtn').addEventListener('click', () => {
+  const bp = bestPriceOf(S);
+  S.price = Math.max(0.01, Math.min(2, Math.round(bp * 100) / 100));
+  toast('已定位最优售价 ' + S.price.toFixed(2) + '（产能刚好被市场消化）');
+  render();
+});
+$('dumpBtn').addEventListener('click', () => {
+  S.price = 0.01;
+  toast('售价压到最低，库存开始清仓');
+  render();
+});
 $('mktBtn').addEventListener('click', () => { buyMkt(S); render(); });
 $('solarBtn').addEventListener('click', () => { buySolar(S); render(); });
 $('battBtn').addEventListener('click', () => { buyBattery(S); render(); });
@@ -1320,11 +1413,22 @@ function renderProjects(listEl, ps) {
       if (pool < p.cost(S)) can = false;
     }
     const stale = p.phase < S.phase;
+    // 缺什么（禁用原因，移动端也能看到）
+    const lack = [];
+    if (p.ops && S.ops < p.ops) lack.push('ops 差 ' + fmt(p.ops - S.ops));
+    if (p.clips && S.clips < p.clips) lack.push('回形针差 ' + fmt(p.clips - S.clips));
+    if (p.creativity && S.creativity < p.creativity) lack.push('创造力差 ' + fmt(p.creativity - S.creativity));
+    if (p.cost) {
+      const pool = p.pool === 'capital' ? S.capital : (S.phase >= 2 ? S.capital : S.funds);
+      const c = p.cost(S);
+      if (pool < c) lack.push((p.pool === 'capital' ? '资本' : (S.phase >= 2 ? '资本' : '资金')) + '差 ' + fmt(c - pool));
+    }
     return `<div class="proj" ${stale ? 'style="opacity:.5;"' : ''}>
       <div class="pname">${p.name}${p.repeatable ? ' ×' + S.megaCostN : ''}${stale ? '（前阶段遗留）' : ''}</div>
       <div class="pdesc">${p.desc}</div>
       <div class="pmeta">${costText(p)} ${p.trust ? ' · 信任 +' + p.trust : ''}
         <button class="act" data-p="${p.id}" ${can ? '' : 'disabled'}>执行</button></div>
+      ${!can && lack.length ? `<div class="lack">还差：${lack.join(' · ')}</div>` : ''}
     </div>`;
   }).join('') || '<div class="hint">暂无可用项目——继续积累。</div>');
   listEl.querySelectorAll('button[data-p]').forEach(b =>
@@ -1352,12 +1456,44 @@ function renderYomi() {
 }
 
 /* 成就 */
+/* 成就进度：按成就描述里的数值目标估算进度条 */
+const ACH_METRIC = [
+  [/点击/, s => s.totalClicks],
+  [/销售|卖出/, s => s.totalSold],
+  [/处理器/, s => s.processors],
+  [/内存/, s => s.memory],
+  [/探测器/, s => s.probes],
+  [/电池/, s => s.mwBanked],
+  [/信任/, s => s.trustEver],
+  [/资金|资本/, s => moneyOf(s)],
+  [/制造|产量|回形针/, s => s.totalClips],
+];
+function achMetricOf(a) {
+  for (const [re, f] of ACH_METRIC) if (re.test(a.desc)) return f;
+  return null;
+}
+function achTargetOf(a) {
+  const nums = (a.desc.match(/[\d,]+(?:\.\d+)?\s*[KMBT]?/g) || []).map(t => {
+    const m = t.trim().match(/^([\d.]+)\s*([KMBT]?)$/); if (!m) return null;
+    const mult = { '': 1, K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[m[2]] || 1;
+    return parseFloat(m[1].replace(/,/g, '')) * mult;
+  }).filter(v => v != null && v > 1);
+  return nums.length ? Math.max(...nums) : null;
+}
 function renderAch() {
   setHTML($('achList'), ACHIEVEMENTS.map(a => {
     const got = S.ach.includes(a.id);
+    let prog = '';
+    if (!got) {
+      const f = achMetricOf(a), tgt = achTargetOf(a);
+      if (f && tgt) {
+        const cur = f(S), pct = Math.min(100, cur / tgt * 100);
+        prog = `<div class="gbar" style="height:14px;margin-top:4px;"><span style="line-height:12px;">${fmt(cur)} / ${fmt(tgt)}</span><i style="width:${pct.toFixed(1)}%"></i></div>`;
+      }
+    }
     return `<div class="a ${got ? 'got' : 'locked'}">
       <div class="an">${got ? '✔ ' : '🔒 '}${a.name}</div>
-      <div>${a.desc}</div></div>`;
+      <div>${a.desc}</div>${prog}</div>`;
   }).join(''));
 }
 
@@ -1395,8 +1531,18 @@ function renderEnding() {
     $('endTitle').textContent = '宇宙 · 探索完成';
     $('endText').textContent =
       `你已经把已知宇宙的每个角落都标上了回形针工厂。\n\n一个声音从宇宙之外传来：\n「还有别的宇宙。去那里，继续。」\n\n或者，你也可以榨干这个宇宙的最后一丝价值。\n\n累计制造：${fmt(S.totalClips)}\n探测器：${fmt(S.probes)}\n成就：${S.ach.length}/${ACHIEVEMENTS.length}`;
+    // 轮回引导：明确告知保留项与下一轮加成
+    const nextRuns = S.runs + 1;
+    const nextMult = Math.pow(1.5, nextRuns);
+    const guide = `\n\n———— 关于轮回 ————\n`
+      + `保留：${S.ach.length}/${ACHIEVEMENTS.length} 项成就 · 已处理事件数 · 里程碑记录\n`
+      + `重置：资金/资本、线材、设备、项目进度、地图（重新从制造阶段开始）\n`
+      + `加成：全局产出 ×${nextMult.toFixed(2)}（第 ${nextRuns} 轮，每轮 ×1.5 叠乘）\n`
+      + `起步：初始资金 ${fmt(10000 * nextRuns)}、线材 ${fmt(5000 * nextRuns)}\n`
+      + `预计下一轮通关：约 ${Math.max(8, Math.round(45 / Math.pow(1.5, S.runs)))} 分钟`;
+    $('endText').textContent += guide;
     $('endBtns').innerHTML =
-      `<button class="act" id="pgBtn">跃迁 · 另一个宇宙（轮回，产出 ×1.5）</button>
+      `<button class="act" id="pgBtn">跃迁 · 另一个宇宙（第 ${nextRuns} 轮 · 产出 ×${nextMult.toFixed(2)}）</button>
        <button class="act" id="mxBtn">榨取极限 · 在此终结</button>`;
     $('ending').classList.add('on');
     $('pgBtn').addEventListener('click', () => {
@@ -1442,13 +1588,38 @@ function showFinal() {
   save();
 }
 
-/* 即将解锁的目标（解锁预告：让玩家随时知道下一步奔什么去） */
+/* 即将解锁的目标（解锁预告：让玩家随时知道下一步奔什么去，并给出可量化进度） */
+function fmtEta(sec) {
+  if (!isFinite(sec) || sec <= 0) return '—';
+  if (sec < 60) return Math.ceil(sec) + ' 秒';
+  if (sec < 3600) return Math.ceil(sec / 60) + ' 分钟';
+  return (sec / 3600).toFixed(1) + ' 小时';
+}
+/* 逐条件进度：[{label, cur, max, unit}]，cur/max 为 null 表示不可量化（如「拥有 1 个处理器」） */
+function goalProgress(p) {
+  const rows = [];
+  if (p.ops) rows.push({ label: 'ops', cur: S.ops, max: p.ops, rate: S.processors * 25 * S.cpuMult * S.prestigeMult });
+  if (p.clips) rows.push({ label: '回形针', cur: S.clips, max: p.clips, rate: autoRate(S) });
+  if (p.creativity) rows.push({ label: '创造力', cur: S.creativity, max: p.creativity, rate: S.processors * 25 * S.cpuMult * 0.15 });
+  if (p.trust) rows.push({ label: '信任', cur: S.trust, max: p.trust, rate: null });
+  // s5 专项：电池累计充入（真正的瓶颈）
+  if (p.id === 's5') rows.push({ label: '电池累计充入 MWs', cur: S.mwBanked, max: 1e7, rate: Math.max(0.01, powerGen(S) - powerUse(S)) });
+  return rows;
+}
 function renderGoals() {
   const goals = PROJECTS.filter(p => p.phase <= S.phase && !S.projectsDone.includes(p.id) && !p.cond(S)).slice(0, 3);
   const box = $('goalBox');
   if (!goals.length) { box.innerHTML = ''; return; }
-  setHTML(box, '<div class="hint"><b>即将解锁：</b></div>' + goals.map(p =>
-    `<div class="hint">· ${p.name} — 需要 ${p.condText}${p.trust ? `，另需 ${p.trust} 信任` : ''}</div>`).join(''));
+  setHTML(box, '<div class="hint"><b>即将解锁：</b></div>' + goals.map(p => {
+    const rows = goalProgress(p);
+    const detail = rows.map(r => {
+      const pct = Math.min(100, r.cur / r.max * 100);
+      const eta = r.rate && r.rate > 0 ? fmtEta((r.max - r.cur) / r.rate) : '';
+      return `<div class="gbar"><span>${r.label} ${fmt(Math.min(r.cur, r.max))} / ${fmt(r.max)}${eta ? ' · 约 ' + eta : ''}</span>`
+        + `<i style="width:${pct.toFixed(1)}%"></i></div>`;
+    }).join('');
+    return `<div class="hint">· <b>${p.name}</b> — 需要 ${p.condText}${p.trust && !rows.some(r => r.label === '信任') ? `，另需 ${p.trust} 信任` : ''}</div>${detail}`;
+  }).join(''));
 }
 
 /* 主渲染 */
@@ -1473,12 +1644,16 @@ function render() {
   $('wire10Btn').disabled = !payMoney(S, wp * 10, true);
   $('synthVal').textContent = S.synthUnlocked ? fmt(S.synths) + '（' + fmt(synthWireRate(S)) + ' 线材/s）' : '未解锁';
   const sc = synthCost(S);
+  const synthLack = !S.synthUnlocked ? '' : (payMoney(S, sc, true) ? '' : `还差 ${fmt(sc - moneyOf(S))} ${S.phase >= 2 ? '资本' : '资金'}`);
   $('synthBtn').textContent = `建造合成器（${fmt(sc)} ${S.phase >= 2 ? '资本' : '资金'}）`;
   $('synthBtn').disabled = !S.synthUnlocked || !payMoney(S, sc, true);
   $('synth10').disabled = !S.synthUnlocked || !payMoney(S, sc, true); $('synth10').title = `买 10 台（首台 ${fmt(sc)}，合计递增）`;
   $('synth100').disabled = !S.synthUnlocked || !payMoney(S, sc, true); $('synth100').title = `买 100 台（首台 ${fmt(sc)}，合计递增）`;
+  $('batchHint').textContent = synthLack;
   $('synthHint').textContent = S.synthUnlocked ? '' :
-    `🔒 解锁途径：项目「线材合成器原型」— 累计制造 50,000 回形针（进度 ${fmt(Math.min(S.totalClips, 50000))} / 50.00 K），项目还需 2 信任 + 5,000 ops。`;
+    (S.totalClips >= 50000
+      ? '✅ 解锁条件已达成 → 去「项目」页执行「线材合成器原型」（需 2 信任 + 5,000 ops）'
+      : `🔒 解锁途径：项目「线材合成器原型」— 累计制造 50,000 回形针（进度 ${fmt(Math.min(S.totalClips, 50000))} / 50.00 K），项目还需 2 信任 + 5,000 ops。`);
 
   // 运算资源用途提示（悬浮/点按显示，随解锁进度变化）
   const TIPS = {
@@ -1505,6 +1680,11 @@ function render() {
   $('demandVal').textContent = fmt(demandOf(S)) + ' /s';
   // 库存滞销提示：有货卖不动时引导降价
   const dem = demandOf(S);
+  // P2-13：首次滞销一次性引导（新手的头号坑）
+  if (!S.tutorialStall && S.clips > 50 && dem < 0.5) {
+    S.tutorialStall = true;
+    setTimeout(() => toast('💡 售价越高需求越低（与售价平方成反比）。把滑杆往左拉，或点「⚡ 最优定价」自动定位。', 7000), 300);
+  }
   $('mktHint').textContent = (S.clips > 50 && dem < 0.5)
     ? `⚠ 库存 ${fmt(S.clips)} 个滞销：需求与售价平方成反比，把滑杆往左拉（建议 ≤ ${Math.max(1, Math.round(Math.sqrt(S.mkt * 2 * S.demandMult / 0.5)))}）即可出货换资金。`
     : '';
@@ -1556,7 +1736,7 @@ function render() {
     renderYomi();
     // 工业
     $('powerVal').textContent = fmt(powerGen(S)) + ' / ' + fmt(powerUse(S)) + ' MW/s';
-    $('battVal').textContent = fmt(S.mwStored) + ' / ' + fmt(S.batteries * 1e6) + '（累计 ' + fmt(S.mwBanked) + '）';
+    $('battVal').textContent = fmt(S.mwStored) + ' / ' + fmt(S.batteries * 1e6 * (S.battCapMult || 1)) + '（累计 ' + fmt(S.mwBanked) + '）';
     $('pwfVal').textContent = (powerFactor(S) * 100).toFixed(0) + '%';
     const so = solarCost(S), ba = batteryCost(S);
     $('solarBtn').textContent = `太阳能农场（${fmt(so)} 资本）`;
@@ -1595,6 +1775,17 @@ function render() {
   if (S.phase >= 3) {
     $('probeVal').textContent = fmt(S.probes);
     $('explVal').textContent = S.exploration.toFixed(2) + '%';
+    const pct = Math.min(100, S.exploration);
+    $('explBar').style.width = pct.toFixed(2) + '%';
+    // 探索速率与预计剩余时间
+    const qBoost = S.qGuided ? 1.5 : 1;
+    const explRate = S.probes * S.attr.explore * (0.5 + 0.1 * S.attr.speed) * 2e-8 * S.exploreMult * S.prestigeMult * qBoost;
+    const etaTxt = explRate > 1e-9 ? '约 ' + fmtEta((100 - S.exploration) / explRate) : '—（无探测器或探索属性为 0）';
+    $('explBarText').textContent = pct.toFixed(1) + '% · 推进 ' + fmt(explRate) + '%/s · 剩余 ' + etaTxt;
+    // 漂流者预警（漂移越高越危险）
+    $('explHint').textContent = S.drift > 0.05
+      ? `⚠ 价值漂移 ${S.drift.toFixed(2)} 已滋生 ${fmt(S.drifters)} 名漂流者：它们会与舰队内战损耗战斗力。研究「同步集群」（创造力 2 万）可抑制。`
+      : (S.boredom ? '⚠ 集群无聊中，生产效率下降。' : '');
     $('spaceMatterVal').textContent = fmt(S.spaceMatter);
     $('driftVal').textContent = S.drift.toFixed(2) + ' / ' + fmt(S.drifters);
     const pc = probeCost(S);
@@ -1606,9 +1797,15 @@ function render() {
   renderAch();
 
   const lb = $('logBox');
-  if (lb.dataset.n !== String(S.log.length)) {
-    lb.innerHTML = S.log.slice(-60).map(l => `<p class="${l.k}">${l.m}</p>`).join('');
-    lb.dataset.n = String(S.log.length);
+  const lf = logFilter;
+  const key = String(S.log.length) + '|' + lf;
+  if (lb.dataset.n !== key) {
+    const rows = S.log.filter(l => lf === 'all'
+      || (lf === 'ach' && l.k === 'ach')
+      || (lf === 'ev' && (l.k === 'ev' || /事件：/.test(l.m)))
+      || (lf === 'sys' && l.k !== 'ach' && l.k !== 'ev' && !/事件：/.test(l.m)));
+    setHTML(lb, rows.slice(-60).map(l => `<p class="${l.k}">${l.m}</p>`).join('') || '<p>该类暂无记录</p>');
+    lb.dataset.n = key;
     lb.scrollTop = lb.scrollHeight;
   }
   renderTabs();
