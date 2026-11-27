@@ -348,7 +348,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v5.0 · 2026-11-27 13:18 构建';
+const VERSION = 'v5.1 · 2026-11-27 15:23 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -1904,25 +1904,72 @@ function render() {
 }
 function renderAll() { render(); }
 
-/* 主循环 + 成就每秒检查 + 量子网格周期重排 */
+/* 主循环 + 成就每秒检查 + 量子网格周期重排
+   v5.1 后台挂机加固：
+   - 用真实帧间隔算 dt，并对超长间隔钳制（后台被节流/冻结后回前台，浏览器可能积压回调或跳时间），
+     避免一次性补跑海量 tick 造成主线程卡死；超长离开改由 visibilitychange 一次性结算离线收益。
+   - 单帧 try/catch：任何一次 tick/render 异常都被隔离，不再中断整个循环导致「永久卡死」。 */
 let achAcc = 0, qAcc = 0;
-setInterval(() => {
-  tick(S, 0.1);
-  achAcc += 0.1; qAcc += 0.1;
-  if (achAcc >= 1) {
-    achAcc = 0;
-    const a = checkAch(S);
-    if (a) { pushLog(S, '成就达成：' + a.name, 'ach'); toast('🏆 成就：' + a.name); }
-  }
-  if (qAcc >= 5) {
-    qAcc = 0;
-    if (S.quantumOn) {
-      if (S.qauto) autoCollectQ(S); // 量子自动化：重排前自动收取 ↑ 态方块
-      reshuffleQGrid(S);
+let _lastFrame = performance.now();
+const MAX_CATCHUP = 0.5; // 单帧最多补 0.5 秒游戏时间（5 步），其余交给可见性补偿
+function frame() {
+  const now = performance.now();
+  let dt = (now - _lastFrame) / 1000;
+  _lastFrame = now;
+  // 后台冻结：不逐帧推进，回来时由 visibilitychange 一次性结算，避免与离线收益重复计算
+  if (document.hidden) return;
+  // 异常间隔（负值/NaN/超长）一律钳制，防止数值污染与积压回放
+  if (!isFinite(dt) || dt <= 0) dt = 0.1;
+  if (dt > MAX_CATCHUP) dt = MAX_CATCHUP;
+  try {
+    const steps = Math.max(1, Math.round(dt / 0.1));
+    const stepDt = dt / steps;
+    for (let i = 0; i < steps; i++) {
+      tick(S, stepDt);
+      achAcc += stepDt; qAcc += stepDt;
     }
+    if (achAcc >= 1) {
+      achAcc %= 1;
+      const a = checkAch(S);
+      if (a) { pushLog(S, '成就达成：' + a.name, 'ach'); toast('🏆 成就：' + a.name); }
+    }
+    if (qAcc >= 5) {
+      qAcc %= 5;
+      if (S.quantumOn) {
+        if (S.qauto) autoCollectQ(S); // 量子自动化：重排前自动收取 ↑ 态方块
+        reshuffleQGrid(S);
+      }
+    }
+    render();
+  } catch (e) {
+    // 单帧异常隔离：记录一次，下一帧继续，避免整个游戏循环停摆
+    if (!frame._warned) { frame._warned = true; console.warn('帧异常已隔离：', e); }
   }
-  render();
-}, 100);
+}
+setInterval(frame, 100);
+
+/* 页面可见性：离开时存档并记录时刻；回来时按真实经过秒数一次性结算，避免依赖被节流的定时器 */
+let _hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    _hiddenAt = Date.now();
+    save();
+  } else if (_hiddenAt) {
+    const away = (Date.now() - _hiddenAt) / 1000;
+    _hiddenAt = 0;
+    _lastFrame = performance.now(); // 重置帧基准，防止把离开时长当成一帧补跑
+    if (away >= 60 && !S.ended) {
+      try {
+        const off = offlineProgress(S, away);
+        if (off) setTimeout(() => toast('📦 离线收益：' + off.detail, 6000), 500);
+      } catch (e) { console.warn('离线结算异常已隔离：', e); }
+    }
+    save();
+    render();
+  }
+});
+// 窗口失焦/页面隐藏也存档，降低被浏览器回收时的进度损失
+window.addEventListener('pagehide', save);
 
 /* 启动 */
 $('verText').textContent = '回形针最大主义者 ' + VERSION;
