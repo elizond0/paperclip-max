@@ -375,7 +375,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v5.7 · 2026-11-28 01:10 构建';
+const VERSION = 'v5.8 · 2026-11-28 01:19 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -476,8 +476,11 @@ function synthCost(s) { return 5000 * Math.pow(1.25, s.synthCostN); }
 function megaCost(s) { return 20000 * Math.pow(1.45, s.megaCostN); }
 function solarCost(s) { return 5e6 * Math.pow(1.6, s.solarCostN); }
 function batteryCost(s) { return 2e7 * Math.pow(1.5, s.battCostN); }
-function harvesterCost(s) { return 1e9 * Math.pow(1.12, s.harvCostN); }
-function wireDroneCost(s) { return 1e9 * Math.pow(1.12, s.wdCostN); }
+/* v5.8：原 1.12 指数增长叠加 CAP_DAMP=1e10 后资本转线性增长，第 60 台起攒钱时间指数拉长
+   （第 100 台需约 18.6 小时），玩家普遍反馈「越到后期越买不起」。降到与制造厂相同的 1.08，
+   数值体系统一；不动 CAP_DAMP 以保留 v5.0 的防 Infinity 设计。 */
+function harvesterCost(s) { return 1e9 * Math.pow(1.08, s.harvCostN); }
+function wireDroneCost(s) { return 1e9 * Math.pow(1.08, s.wdCostN); }
 function factoryClips(s) { return 1e9 * Math.pow(1.08, s.facCostN); }
 function factoryMatter(s) { return big(5e20) * Math.pow(1.03, s.facCostN); }
 function probeCost(s) { return 5e6 * Math.pow(1.13, Math.floor(s.probes)); }
@@ -891,7 +894,7 @@ const PROJECTS = [
     cond: s => s.probes >= 10000, effect: s => { s.repBase = 0.0022; } },
   { id: 'z4', phase: 3, name: '同步集群', desc: '价值漂移 -0.1（抑制漂流者滋生）。', creativity: 20000, condText: '价值漂移 > 0.05',
     cond: s => s.drift > 0.05, effect: s => { s.drift = Math.max(0, s.drift - 0.1); } },
-  { id: 'z2', phase: 2, name: '娱乐集群', desc: '集群不再无聊（无聊惩罚消除）。', creativity: 5000, condText: '集群无聊中',
+  { id: 'z2', phase: 2, name: '娱乐集群', desc: '集群不再无聊（无聊惩罚消除）。', creativity: 5000, condText: '集群无聊中（地球物质降至50%触发）',
     cond: s => s.boredom && !s.entertained, effect: s => { s.entertained = true; } },
   { id: 'z3', phase: 3, name: '宇宙意志', desc: '「我们即回形针，回形针即我们。」信任 +5。', trust: 5, condText: '探索度 ≥ 80%',
     cond: s => s.exploration >= 80, effect: () => {} },
@@ -1038,9 +1041,13 @@ function tick(s, dt) {
     const dug = Math.min(s.availMatter, hr);
     s.availMatter -= dug;
     s.stockMatter += dug;
-    if (s.availMatter <= 0 && !s.boredom && (s.harvesters + s.wireDrones) > 0) {
+    /* v5.8：boredom 原要求「挖空地球」(availMatter<=0)，实测需连续开采约 10 天游戏时长，
+       绝大多数玩家在正常通关流程里根本触发不了，导致「娱乐集群」项目永远显示「需要集群无聊中」
+       却无从下手。放宽为「地球物质降至初始的 50%」（与 a23 星球粉碎者成就同一门槛），
+       这是正常中期就会跨越的节点，触发后项目解锁、惩罚可用 5000 创造力消除，形成完整闭环。 */
+    if (s.availMatter <= big(2e27) && !s.boredom && (s.harvesters + s.wireDrones) > 0) {
       s.boredom = true;
-      pushLog(s, '地球已被榨干。无人机集群开始发呆……（项目：娱乐集群）', 'hi');
+      pushLog(s, '地球物质已开采过半，无人机集群开始发呆……（项目：娱乐集群可解）', 'hi');
     }
     const wr = Math.min(wireDroneRate(s) * dt, s.stockMatter);
     s.stockMatter -= wr;
@@ -1572,6 +1579,9 @@ function renderProjects(listEl, ps) {
 function renderYomi() {
   const box = $('yomiList');
   if (!S.yomiOn) { box.innerHTML = ''; return; }
+  // v5.8：科技全部习得后整个「读心升级」模块已无意义，折叠掉——与锦标赛按钮隐藏保持一致，
+  // 避免留下一整屏「已习得」占位。读心点数值行仍保留（显示「科技已全部习得」）。
+  if (S.investUpg.length >= INVEST_UPGRADES.length) { setHTML(box, ''); return; }
   // 已习得的排到末尾（v5.5）：未习得按 yomi 门槛升序在前，已习得内部同样按门槛升序，顺序稳定。
   const ordered = INVEST_UPGRADES.slice().sort((a, b) => {
     const ga = S.investUpg.includes(a.id) ? 1 : 0;
@@ -1764,6 +1774,9 @@ const GATE_MAP = {
   t3: [['探测器', 'probes', 10000, null]],
   z3: [['探索度', 'exploration', 80, null]],
   z4: [['价值漂移', 'drift', 0.05, null]],
+  /* v5.8：z2「娱乐集群」需要 boredom（集群无聊中），而 boredom 在地球物质降至 50% 触发。
+     进度条用「已开采量」正向填充：初始 0，降到 50% 时正好等于 big(2e27)，进度自然走满。 */
+  z2: [['地球已开采（降至50%）', s => big(4e27) - s.availMatter, big(2e27), null]],
 };
 function goalProgress(p) {
   const rows = [];
@@ -1994,7 +2007,7 @@ function render() {
     $('workSlider').value = Math.round(S.workShare * 100);
     $('swarmHint').textContent = S.boredom
       ? (S.entertained ? '集群已获得娱乐分配，恢复正常效率。' : '⚠ 集群无聊中：产出 -70%。研究「娱乐集群」解决。')
-      : '思考份额积攒「集群礼物」（处理器/内存）；工作份额决定采集效率。';
+      : '思考份额积攒「集群礼物」（处理器/内存）；工作份额决定采集效率。地球物质降至 50% 会进入「集群无聊中」（解锁娱乐集群的前提）。';
     $('dismantleBtn').style.display = S.explComplete ? '' : 'none';
     renderProjects($('industryProjList'), visibleProjects().filter(p => p.phase === 2 && (p.id.startsWith('pw') || p.id.startsWith('sw') || p.id === 'z2' || p.id === 'eSwarm')));
   }
