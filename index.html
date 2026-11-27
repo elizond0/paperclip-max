@@ -139,6 +139,15 @@
 
   footer { text-align: center; color: var(--dim); font-size: 13px; padding: 16px 0 20px; }
   .hint { color: var(--dim); font-size: 14px; margin-top: 8px; }
+  /* v5.4 布局防抖：动态提示区固定占位高度。内容 0↔N 行切换时若高度跟着变，
+     下方按钮会在点击瞬间被抽走（wire=0 时自动产量行消失 → 线材购买按钮点不到）。
+     固定 min-height 后内容怎么变都不影响后续元素位置。 */
+  /* 自动产量信息恒占两行：固定 height+overflow 彻底锁死高度，全文保留在 title 悬浮不丢信息。
+     不用 line-clamp——其内容行数变化会触发首次布局重算，仍会产生 5px 级位移。 */
+  #makeHint { height: 45px; overflow: hidden; }
+  #synthHint { min-height: 68px; }  /* 合成器解锁说明恒占三行 */
+  #mktHint { min-height: 45px; }    /* 滞销提示恒占两行 */
+  #batchHint, #swarmHint { min-height: 22px; } /* 单行提示恒占一行 */
   /* 悬浮提示：小图标，桌面 hover / 手机点按显示 */
   .tip { display: inline-flex; align-items: center; justify-content: center; position: relative;
     width: 18px; height: 18px; min-width: 18px; margin-left: 5px; border-radius: 50%;
@@ -367,7 +376,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v5.3 · 2026-11-27 22:55 构建';
+const VERSION = 'v5.4 · 2026-11-27 23:00 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -1839,17 +1848,19 @@ function render() {
   const mc = mktCost(S);
   $('mktBtn').textContent = `升级营销（${fmt(mc)} ${S.phase >= 2 ? '资本' : '资金'}）`;
   $('mktBtn').disabled = S.mkt >= 12 || !payMoney(S, mc, true);
-  if (S.wire < 1) {
-    $('makeHint').textContent = '⚠ 线材不足，无法制造';
-  } else {
-    const parts = [`自动产量 ${fmt(autoRate(S))} /s（剪裁机 ${fmt(S.clippers)} × ${fmt(S.clipMult * (S.cpuBoost ? 1 + S.processors * 0.05 : 1))}`];
-    if (S.megas > 0) parts[0] += ` + 超级机 ${fmt(S.megas * 2000 * S.megaMult)}`;
-    if (S.factories > 0) parts[0] += ` + 制造厂 ${fmt(factoryRate(S))}`;
-    parts[0] += '）';
-    parts.push(`暴击率 ${(S.critChance * 100).toFixed(0)}%`);
-    if (S.phase >= 2) parts.push(`供电率 ${(powerFactor(S) * 100).toFixed(0)}%`);
-    $('makeHint').textContent = parts.join(' · ');
-  }
+  // v5.4：产量信息始终保留（线材为 0 时也能看到产能与缺线材原因）；
+  // 警告作为独立一行追加，配合 #makeHint 固定 min-height，行数变化不再推动下方按钮。
+  const parts = [`自动产量 ${fmt(autoRate(S))} /s（剪裁机 ${fmt(S.clippers)} × ${fmt(S.clipMult * (S.cpuBoost ? 1 + S.processors * 0.05 : 1))}`];
+  if (S.megas > 0) parts[0] += ` + 超级机 ${fmt(S.megas * 2000 * S.megaMult)}`;
+  if (S.factories > 0) parts[0] += ` + 制造厂 ${fmt(factoryRate(S))}`;
+  parts[0] += '）';
+  parts.push(`暴击率 ${(S.critChance * 100).toFixed(0)}%`);
+  if (S.phase >= 2) parts.push(`供电率 ${(powerFactor(S) * 100).toFixed(0)}%`);
+  const hintText = S.wire < 1
+    ? '⚠ 线材不足，无法制造 · ' + parts.join(' · ')
+    : parts.join(' · ');
+  $('makeHint').textContent = hintText;
+  $('makeHint').title = hintText;
 
   // 自动剪裁机（前期主力产量：资金优先买它）
   const cc = clipperCost(S);
