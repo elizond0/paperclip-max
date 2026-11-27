@@ -278,7 +278,7 @@
         <div class="btnrow" id="riskBtns"></div>
         <div class="row"><span class="k">收益率</span><span class="v" id="rateVal"></span></div>
         <div class="row"><span class="k">读心点 yomi</span><span class="v" id="yomiVal">0</span></div>
-        <div class="btnrow"><button class="act" id="tourBtn">举办锦标赛</button></div>
+        <div class="btnrow" id="tourBtnWrap"><button class="act" id="tourBtn">举办锦标赛</button></div>
         <div class="row"><span class="k">对手份额</span><span class="v" id="rivalVal2">—</span></div>
         <div id="investProjList" style="margin-top:10px;"></div>
         <div id="yomiList" style="margin-top:10px;"></div>
@@ -376,7 +376,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v5.5 · 2026-11-27 23:25 构建';
+const VERSION = 'v5.6 · 2026-11-28 00:55 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -928,7 +928,7 @@ function buyWire(s, batches) {
   return true;
 }
 function buyClipper(s) { const c = clipperCost(s); return payMoney(s, c) ? (s.clippers += 1, true) : false; }
-function buyMkt(s) { const c = mktCost(s); if (s.mkt >= 12 || !payMoney(s, c)) return false; s.mkt += 1; return true; }
+function buyMkt(s) { const c = mktCost(s); if (!payMoney(s, c)) return false; s.mkt += 1; return true; } // v5.6：去掉 ≥12 硬顶，买断后营销仍提升需求，成本 1.8× 递增天然封顶
 function buySynth(s) { const c = synthCost(s); if (!s.synthUnlocked || !payMoney(s, c)) return false; s.synths += 1; s.synthCostN += 1; return true; }
 function buyMega(s) { const c = megaCost(s); if (s.capital < c) return false; s.capital -= c; s.megas += 1; s.megaCostN += 1; return true; }
 function buySolar(s) { const c = solarCost(s); if (!s.powerUnlocked || s.capital < c) return false; s.capital -= c; s.solarFarms += 1; s.solarCostN += 1; return true; }
@@ -1866,13 +1866,25 @@ function render() {
     S.tutorialStall = true;
     setTimeout(() => toast('💡 售价越高需求越低（与售价平方成反比）。把滑杆往左拉，或点「⚡ 最优定价」自动定位。', 7000), 300);
   }
-  $('mktHint').textContent = (S.clips > 50 && dem < 0.5)
-    ? `⚠ 库存 ${fmt(S.clips)} 个滞销：需求与售价平方成反比，把滑杆往左拉（建议 ≤ ${Math.max(1, Math.round(Math.sqrt(S.mkt * 2 * S.demandMult / 0.5)))}）即可出货换资金。`
-    : '';
+  // v5.6：滞销提示分两种——①价格过高（降价可解）②需求已到顶（需升营销/买断）
+  const prodNow = autoRate(S);
+  const priceCapped = S.price <= 0.01;                       // 已在最低价
+  const demandCapped = dem < prodNow * 0.5;                  // 需求远低于产能
+  if (S.clips > 50 && dem < 0.5 && !priceCapped) {
+    $('mktHint').textContent = `⚠ 库存 ${fmt(S.clips)} 个滞销：需求与售价平方成反比，把滑杆往左拉（建议 ≤ ${Math.max(1, Math.round(Math.sqrt(S.mkt * 2 * S.demandMult / 0.5)))}）即可出货换资金。`;
+  } else if (S.clips > 50 && demandCapped) {
+    $('mktHint').textContent = priceCapped
+      ? `⚠ 售价已最低，需求 ${fmt(dem)}/s 仍远低于产能 ${fmt(prodNow)}/s：销量被「市场需求上限」卡住，升级营销或买断对手可提升需求。`
+      : `⚠ 需求 ${fmt(dem)}/s 低于产能 ${fmt(prodNow)}/s：点「⚡ 最优定价」降价到 ${fmt(Math.max(0.01, bestPriceOf(S)))} 可卖出更多。`;
+  } else {
+    $('mktHint').textContent = '';
+  }
   $('rivalVal').textContent = S.phase >= 2 ? (S.rivalGone ? '已买断' : (S.rivalShare * 100).toFixed(1) + '%') : '—';
+  $('rivalVal').title = S.rivalGone ? '竞争对手已买断：不再瓜分市场。但销量仍受市场需求上限约束——继续升级营销可提升需求与销量。' : '对手份额随时间增长，会压低你的需求；买断可永久消除。';
   const mc = mktCost(S);
   $('mktBtn').textContent = `升级营销（${fmt(mc)} ${S.phase >= 2 ? '资本' : '资金'}）`;
-  $('mktBtn').disabled = S.mkt >= 12 || !payMoney(S, mc, true);
+  $('mktBtn').disabled = !payMoney(S, mc, true); // v5.6：买断后营销仍提升需求，不再因 ≥12 锁死
+  $('mktBtn').title = `营销 Lv.${S.mkt} → ${S.mkt + 1}：需求 ×${(1 + 1 / S.mkt).toFixed(2)}，销量与收入提升。买断对手后依然有效。`;
   // v5.4：产量信息始终保留（线材为 0 时也能看到产能与缺线材原因）；
   // 警告作为独立一行追加，配合 #makeHint 固定 min-height，行数变化不再推动下方按钮。
   const parts = [`自动产量 ${fmt(autoRate(S))} /s（剪裁机 ${fmt(S.clippers)} × ${fmt(S.clipMult * (S.cpuBoost ? 1 + S.processors * 0.05 : 1))}`];
@@ -1911,7 +1923,10 @@ function render() {
       `<button class="act" data-risk="${i}" ${S.risk === i ? 'style="border-color:var(--accent);color:var(--accent);"' : ''}>${t.name}（${(t.rate * 100).toFixed(1)}%±${(t.vol * 100).toFixed(0)}%）</button>`).join('') : '');
     // 点击交给统一事件委托（v5.3）
     $('rateVal').textContent = S.investEngine ? ((investRate(S) + (S.growthBonus || 0)) * 100).toFixed(1) + '% /s（±波动）' : '—';
-    $('yomiVal').textContent = fmt(S.yomi);
+    // v5.6：读心科技全部习得后，锦标赛已无产出意义——隐藏按钮，避免浪费点击
+    const yomiDone = S.investUpg.length >= INVEST_UPGRADES.length;
+    $('tourBtnWrap').style.display = yomiDone ? 'none' : '';
+    $('yomiVal').textContent = yomiDone ? fmt(S.yomi) + '（科技已全部习得）' : fmt(S.yomi);
     $('tourBtn').textContent = `举办锦标赛（${fmt(2500)} ops）`;
     $('tourBtn').disabled = !S.yomiOn || S.ops < 2500;
     $('rivalVal2').textContent = S.rivalGone ? '已买断' : (S.rivalShare * 100).toFixed(1) + '%';
