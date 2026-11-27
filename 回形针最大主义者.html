@@ -367,7 +367,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v5.2 · 2026-11-27 16:00 构建';
+const VERSION = 'v5.3 · 2026-11-27 22:55 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -1280,12 +1280,7 @@ function renderTrustSpend() {
     return `<div class="row" ${maxed ? 'style="opacity:.45;"' : ''}><span class="k">${a.name} · ${a.desc}</span>
       <button class="act" data-tk="${k}" ${maxed || locked || S.trust < c ? 'disabled' : ''}>${maxed ? '已满' : c + ' 信任'}</button></div>`;
   }).join(''));
-  box.querySelectorAll('button[data-tk]').forEach(b =>
-    b.addEventListener('click', () => {
-      const k = b.dataset.tk;
-      if (spendTrust(S, k)) toast(TRUST_ACTIONS[k].name + '完成');
-      scheduleRender();
-    }));
+  // 点击交给下方统一事件委托，禁止在 render 里重复 addEventListener（v5.3）
   // 乞求线材按钮状态
   const beg = $('begBtn');
   const begOn = S.phase === 1 && S.wire <= 200 && S.trust >= 1;
@@ -1301,8 +1296,7 @@ function renderAttrs() {
       `<div class="row"><span class="k">${ATTRS[k]} Lv.${S.attr[k]}</span>
        <button class="act" data-at="${k}" ${S.trust < 1 ? 'disabled' : ''}>+1</button></div>`).join('') +
     `<div class="hint">价值漂移 ${S.drift.toFixed(2)} · 漂流者 ${fmt(S.drifters)}</div>`);
-  box.querySelectorAll('button[data-at]').forEach(b =>
-    b.addEventListener('click', () => { allocAttr(S, b.dataset.at); scheduleRender(); }));
+  // 点击交给统一事件委托（v5.3）
 }
 
 /* 量子网格 */
@@ -1312,9 +1306,42 @@ function renderQGrid() {
   $('qHint').style.display = '';
   setHTML(g, S.qtiles.map((up, i) =>
     `<button class="${up ? 'up' : 'down'}" data-qi="${i}">${up ? '↑' : '↓'}</button>`).join(''));
-  g.querySelectorAll('button[data-qi]').forEach(b =>
-    b.addEventListener('click', () => { if (quantumClick(S, Number(b.dataset.qi))) renderQGrid(); }));
+  // 点击交给统一事件委托（v5.3）
 }
+
+/* 动态按钮统一事件委托（v5.3）
+   根因：setHTML 在内容未变时跳过 DOM 重建，旧代码仍在每次 render 里对同一批按钮
+   addEventListener；主循环 100ms 一次，几秒后一个按钮就叠了几十个处理器，
+   点一下被执行 N 次——信任点只有 3 点，于是一次点击全扣光。
+   现在只在 document 上绑一次，按 data-* 分发：按一下永远只执行一下。 */
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest(
+    'button[data-tk],button[data-at],button[data-qi],button[data-t],button[data-p],button[data-u],button[data-risk]');
+  if (!b || b.disabled) return;
+  const d = b.dataset;
+  if (d.tk !== undefined) {
+    if (spendTrust(S, d.tk)) toast(TRUST_ACTIONS[d.tk].name + '完成');
+    scheduleRender();
+  } else if (d.at !== undefined) {
+    allocAttr(S, d.at); scheduleRender();
+  } else if (d.qi !== undefined) {
+    if (quantumClick(S, Number(d.qi))) renderQGrid();
+    scheduleRender();
+  } else if (d.t !== undefined) {
+    curTab = d.t; renderTabs();
+  } else if (d.p !== undefined) {
+    const r = runProject(S, d.p);
+    if (r === '超级智能计划') curTab = 'invest';
+    if (r === '太空探索计划') curTab = 'space';
+    if (r) toast('项目完成：' + r);
+    render();
+  } else if (d.u !== undefined) {
+    if (buyInvestUpgrade(S, d.u)) toast('习得：' + d.u);
+    scheduleRender();
+  } else if (d.risk !== undefined) {
+    S.risk = Number(d.risk); scheduleRender();
+  }
+});
 
 /* 主面板事件 */
 // 用途提示：手机点按切换显示（桌面走 CSS hover）
@@ -1449,8 +1476,7 @@ let curTab = 'projects';
 function renderTabs() {
   setHTML($('tabs'), TABS.filter(t => t.show()).map(t =>
     `<button data-t="${t.id}" class="${curTab === t.id ? 'on' : ''}">${t.label}</button>`).join(''));
-  $('tabs').querySelectorAll('button').forEach(b =>
-    b.addEventListener('click', () => { curTab = b.dataset.t; renderTabs(); }));
+  // 点击交给统一事件委托（v5.3）
   TABS.forEach(t => {
     const p = $('pane-' + t.id);
     if (p) p.classList.toggle('on', curTab === t.id);
@@ -1501,14 +1527,7 @@ function renderProjects(listEl, ps) {
       ${!can && lack.length ? `<div class="lack">还差：${lack.join(' · ')}</div>` : ''}
     </div>`;
   }).join('') || '<div class="hint">暂无可用项目——继续积累。</div>');
-  listEl.querySelectorAll('button[data-p]').forEach(b =>
-    b.addEventListener('click', () => {
-      const r = runProject(S, b.dataset.p);
-      if (r === '超级智能计划') curTab = 'invest';
-      if (r === '太空探索计划') curTab = 'space';
-      if (r) toast('项目完成：' + r);
-      render();
-    }));
+  // 点击交给统一事件委托（v5.3）
 }
 
 /* yomi 升级 */
@@ -1521,8 +1540,7 @@ function renderYomi() {
       <div class="pmeta">yomi ${u.yomi}
       <button class="act" data-u="${u.id}" ${got || S.yomi < u.yomi ? 'disabled' : ''}>${got ? '已习得' : '学习'}</button></div></div>`;
   }).join(''));
-  box.querySelectorAll('button[data-u]').forEach(b =>
-    b.addEventListener('click', () => { if (buyInvestUpgrade(S, b.dataset.u)) toast('习得：' + b.dataset.u); scheduleRender(); }));
+  // 点击交给统一事件委托（v5.3）
 }
 
 /* 成就 */
@@ -1855,8 +1873,7 @@ function render() {
     $('riskVal').textContent = S.investEngine ? RISK_TIERS[S.risk].name : '需研究「投资组合理论」';
     setHTML($('riskBtns'), S.investEngine ? RISK_TIERS.map((t, i) =>
       `<button class="act" data-risk="${i}" ${S.risk === i ? 'style="border-color:var(--accent);color:var(--accent);"' : ''}>${t.name}（${(t.rate * 100).toFixed(1)}%±${(t.vol * 100).toFixed(0)}%）</button>`).join('') : '');
-    $('riskBtns').querySelectorAll('button[data-risk]').forEach(b =>
-      b.addEventListener('click', () => { S.risk = Number(b.dataset.risk); scheduleRender(); }));
+    // 点击交给统一事件委托（v5.3）
     $('rateVal').textContent = S.investEngine ? ((investRate(S) + (S.growthBonus || 0)) * 100).toFixed(1) + '% /s（±波动）' : '—';
     $('yomiVal').textContent = fmt(S.yomi);
     $('tourBtn').textContent = `举办锦标赛（${fmt(2500)} ops）`;
