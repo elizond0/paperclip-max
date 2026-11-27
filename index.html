@@ -150,6 +150,11 @@
     box-shadow: 0 4px 14px rgba(0,0,0,.5); z-index: 50; cursor: default; }
   .tip:hover .tipbox, .tip.open .tipbox { display: block; }
   .btnrow { display: flex; gap: 7px; flex-wrap: wrap; margin: 5px 0; }
+  /* 设备采购组：每个设备独占一行、组内不换行，避免 ×100 跑到下个设备名前（v5.2） */
+  .devgrp { display: flex; flex-direction: column; gap: 5px; }
+  .devline { display: flex; gap: 7px; flex-wrap: nowrap; align-items: center; width: 100%; }
+  .devline .act { flex: 0 0 auto; white-space: nowrap; }
+  .devline .act.sm { flex: 0 0 auto; }
   .act.sm { padding: 8px 12px; font-size: 14px; min-height: 0; }
   /* 即将解锁进度条 */
   .lack { color: var(--warn, #e0a040); font-size: 13px; margin-top: 4px; }
@@ -177,10 +182,12 @@
       <button id="makeBtn">制造回形针</button>
       <div class="hint" id="makeHint"></div>
       <div class="row"><span class="k">自动剪裁机</span><span class="v" id="clipperVal">0</span></div>
-      <div class="btnrow">
-        <button class="act" id="clipperBtn">建造自动剪裁机</button>
-        <button class="act sm" id="clipper10" title="一次买 10 台">×10</button>
-        <button class="act sm" id="clipper100" title="一次买 100 台">×100</button>
+      <div class="devgrp">
+        <div class="devline">
+          <button class="act" id="clipperBtn">建造自动剪裁机</button>
+          <button class="act sm" id="clipper10" title="一次买 10 台">×10</button>
+          <button class="act sm" id="clipper100" title="一次买 100 台">×100</button>
+        </div>
       </div>
       <div class="hint">自动剪裁机是前期最主要的产量来源：每台 10 资金起步，随数量涨价。资金优先买它，手点只是开局过渡。</div>
     </div>
@@ -196,10 +203,12 @@
         <button class="act" id="autoWireBtn" style="display:none;">自动采购：开</button>
       </div>
       <div class="row" style="margin-top:6px;"><span class="k">合成器</span><span class="v" id="synthVal">0</span></div>
-      <div class="btnrow">
-        <button class="act" id="synthBtn">建造合成器</button>
-        <button class="act sm" id="synth10">×10</button>
-        <button class="act sm" id="synth100">×100</button>
+      <div class="devgrp">
+        <div class="devline">
+          <button class="act" id="synthBtn">建造合成器</button>
+          <button class="act sm" id="synth10">×10</button>
+          <button class="act sm" id="synth100">×100</button>
+        </div>
       </div>
       <div class="lack" id="batchHint"></div>
       <div class="hint" id="synthHint"></div>
@@ -271,26 +280,36 @@
         <div class="row"><span class="k">电池组电量 / 库存</span><span class="v" id="battVal"></span></div>
         <div class="row"><span class="k">生产效率（供电率）</span><span class="v" id="pwfVal"></span></div>
         <div class="hint" id="pwfHint">供电率 = 电力产出 ÷ 电力消耗（上限 100%）。不足时制造厂与无人机按比例降速：增建太阳能农场提升产出，电池组在富余时充电、缺电时放电削峰。</div>
-        <div class="btnrow">
-          <button class="act" id="solarBtn">太阳能农场</button>
-          <button class="act sm" id="solar10">×10</button>
-          <button class="act sm" id="solar100">×100</button>
-          <button class="act" id="battBtn">电池组</button>
-          <button class="act sm" id="batt10">×10</button>
-          <button class="act sm" id="batt100">×100</button>
+        <div class="devgrp">
+          <div class="devline">
+            <button class="act" id="solarBtn">太阳能农场</button>
+            <button class="act sm" id="solar10">×10</button>
+            <button class="act sm" id="solar100">×100</button>
+          </div>
+          <div class="devline">
+            <button class="act" id="battBtn">电池组</button>
+            <button class="act sm" id="batt10">×10</button>
+            <button class="act sm" id="batt100">×100</button>
+          </div>
         </div>
         <div class="row" style="margin-top:8px;"><span class="k">可用物质（地球）</span><span class="v" id="availMatterVal"></span></div>
         <div class="row"><span class="k">已采物质库存</span><span class="v" id="stockMatterVal"></span></div>
-        <div class="btnrow">
-          <button class="act" id="harvBtn">采集无人机</button>
-          <button class="act sm" id="harv10">×10</button>
-          <button class="act sm" id="harv100">×100</button>
-          <button class="act" id="wireDroneBtn">线材无人机</button>
-          <button class="act sm" id="wd10">×10</button>
-          <button class="act sm" id="wd100">×100</button>
-          <button class="act" id="factoryBtn">制造厂</button>
-          <button class="act sm" id="fac10">×10</button>
-          <button class="act sm" id="fac100">×100</button>
+        <div class="devgrp">
+          <div class="devline">
+            <button class="act" id="harvBtn">采集无人机</button>
+            <button class="act sm" id="harv10">×10</button>
+            <button class="act sm" id="harv100">×100</button>
+          </div>
+          <div class="devline">
+            <button class="act" id="wireDroneBtn">线材无人机</button>
+            <button class="act sm" id="wd10">×10</button>
+            <button class="act sm" id="wd100">×100</button>
+          </div>
+          <div class="devline">
+            <button class="act" id="factoryBtn">制造厂</button>
+            <button class="act sm" id="fac10">×10</button>
+            <button class="act sm" id="fac100">×100</button>
+          </div>
         </div>
         <div class="row" style="margin-top:8px;"><span class="k">无人机数量（采/线）</span><span class="v" id="droneVal"></span></div>
         <div class="row"><span class="k">制造厂</span><span class="v" id="factoryVal">0</span></div>
@@ -348,7 +367,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v5.1 · 2026-11-27 15:23 构建';
+const VERSION = 'v5.2 · 2026-11-27 16:00 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -723,12 +742,16 @@ function spawnEvent(s) {
 }
 function chooseEvent(s, idx) {
   if (!s.activeEvent) return null;
-  const opt = s.activeEvent.opts[idx];
-  opt.fx(s);
-  s.eventsSeen += 1;
-  const msg = s.activeEvent.title + '：' + opt.log;
+  const ev = s.activeEvent;
+  const opt = ev.opts[idx];
+  if (!opt) return null; // 越界保护：无效选项不消费事件
+  // 关键：先清除事件再执行效果。效果 fx 若因老存档字段缺失/极端数值抛错，
+  // 事件也不会永久卡在屏幕上（历史 bug：fx 在前、清除在后，异常导致事件卡死）。
   s.activeEvent = null;
   s.eventTimer = 150 + Math.random() * 120;
+  s.eventsSeen += 1;
+  const msg = ev.title + '：' + (opt.log || '');
+  try { opt.fx(s); } catch (err) { console.warn('事件效果异常已隔离：', err); }
   pushLog(s, msg);
   return msg;
 }
@@ -1213,6 +1236,14 @@ window.addEventListener('beforeunload', save);
 const $ = id => document.getElementById(id);
 /* 内容未变则不重建 DOM：避免 100ms 重渲染替换按钮节点吞掉点击（v3.6 事件横幅同款修复的推广） */
 function setHTML(el, html) { if (el.__last === html) return; el.__last = html; el.innerHTML = html; }
+/* 渲染合并：把同一帧内的多次点击触发的 render() 合并成一次，避免连点时重复全量渲染造成卡顿。
+   主循环仍以 100ms 独立 render 保底，此处只加速交互反馈。 */
+let _renderQueued = false;
+function scheduleRender() {
+  if (_renderQueued) return;
+  _renderQueued = true;
+  requestAnimationFrame(() => { _renderQueued = false; render(); });
+}
 const toastEl = $('toast');
 let toastTimer = null;
 function toast(msg, ms) {
@@ -1231,8 +1262,8 @@ const STAT_DEFS = [
   ['阶段', s => ['', '制造', '投资', '太空'][s.phase] + (s.runs ? ' · 轮回' + s.runs : '')],
 ];
 function renderStats() {
-  $('statsBar').innerHTML = STAT_DEFS.map(([k, f]) =>
-    `<span class="st">${k}<b>${f(S)}</b></span>`).join('');
+  setHTML($('statsBar'), STAT_DEFS.map(([k, f]) =>
+    `<span class="st">${k}<b>${f(S)}</b></span>`).join(''));
 }
 
 /* 信任花费按钮（动态） */
@@ -1253,7 +1284,7 @@ function renderTrustSpend() {
     b.addEventListener('click', () => {
       const k = b.dataset.tk;
       if (spendTrust(S, k)) toast(TRUST_ACTIONS[k].name + '完成');
-      render();
+      scheduleRender();
     }));
   // 乞求线材按钮状态
   const beg = $('begBtn');
@@ -1271,7 +1302,7 @@ function renderAttrs() {
        <button class="act" data-at="${k}" ${S.trust < 1 ? 'disabled' : ''}>+1</button></div>`).join('') +
     `<div class="hint">价值漂移 ${S.drift.toFixed(2)} · 漂流者 ${fmt(S.drifters)}</div>`);
   box.querySelectorAll('button[data-at]').forEach(b =>
-    b.addEventListener('click', () => { allocAttr(S, b.dataset.at); render(); }));
+    b.addEventListener('click', () => { allocAttr(S, b.dataset.at); scheduleRender(); }));
 }
 
 /* 量子网格 */
@@ -1301,27 +1332,27 @@ $('makeBtn').addEventListener('click', () => {
     if (r.crit) toast('暴击！+' + fmt(r.gain) + ' 回形针');
   }
 });
-$('wireBtn').addEventListener('click', () => { buyWire(S, 1); render(); });
-$('clipperBtn').addEventListener('click', () => { buyClipper(S); render(); });
+$('wireBtn').addEventListener('click', () => { buyWire(S, 1); scheduleRender(); });
+$('clipperBtn').addEventListener('click', () => { buyClipper(S); scheduleRender(); });
 /* 批量购买：×10 / ×100（钱不够买几台算几台） */
-$('clipper10').addEventListener('click', () => { const k = buyN(S, buyClipper, 10); if (k) toast('买到 ' + k + ' 台自动剪裁机'); render(); });
-$('clipper100').addEventListener('click', () => { const k = buyN(S, buyClipper, 100); if (k) toast('买到 ' + k + ' 台自动剪裁机'); render(); });
-$('synth10').addEventListener('click', () => { const k = buyN(S, buySynth, 10); if (k) toast('买到 ' + k + ' 台合成器'); render(); });
-$('synth100').addEventListener('click', () => { const k = buyN(S, buySynth, 100); if (k) toast('买到 ' + k + ' 台合成器'); render(); });
-$('solar10').addEventListener('click', () => { const k = buyN(S, buySolar, 10); if (k) toast('建成 ' + k + ' 座太阳能农场'); render(); });
-$('solar100').addEventListener('click', () => { const k = buyN(S, buySolar, 100); if (k) toast('建成 ' + k + ' 座太阳能农场'); render(); });
-$('batt10').addEventListener('click', () => { const k = buyN(S, buyBattery, 10); if (k) toast('装了 ' + k + ' 组电池'); render(); });
-$('batt100').addEventListener('click', () => { const k = buyN(S, buyBattery, 100); if (k) toast('装了 ' + k + ' 组电池'); render(); });
-$('harv10').addEventListener('click', () => { const k = buyN(S, buyHarvester, 10); if (k) toast('派出 ' + k + ' 台采集无人机'); render(); });
-$('harv100').addEventListener('click', () => { const k = buyN(S, buyHarvester, 100); if (k) toast('派出 ' + k + ' 台采集无人机'); render(); });
-$('wd10').addEventListener('click', () => { const k = buyN(S, buyWireDrone, 10); if (k) toast('派出 ' + k + ' 台线材无人机'); render(); });
-$('wd100').addEventListener('click', () => { const k = buyN(S, buyWireDrone, 100); if (k) toast('派出 ' + k + ' 台线材无人机'); render(); });
-$('fac10').addEventListener('click', () => { const k = buyN(S, buyFactory, 10); if (k) toast('建成 ' + k + ' 座制造厂'); render(); });
-$('fac100').addEventListener('click', () => { const k = buyN(S, buyFactory, 100); if (k) toast('建成 ' + k + ' 座制造厂'); render(); });
-$('wire10Btn').addEventListener('click', () => { buyWire(S, 10); render(); });
-$('begBtn').addEventListener('click', () => { if (spendTrust(S, 'begwire')) toast('人类同情了你：+5000 线材'); render(); });
-$('autoWireBtn').addEventListener('click', () => { S.autoWirePref = S.autoWirePref === false; toast(S.autoWirePref !== false ? '自动采购已开启：只在低价位且资金充裕时购入' : '自动采购已关闭'); render(); });
-$('synthBtn').addEventListener('click', () => { buySynth(S); render(); });
+$('clipper10').addEventListener('click', () => { const k = buyN(S, buyClipper, 10); if (k) toast('买到 ' + k + ' 台自动剪裁机'); scheduleRender(); });
+$('clipper100').addEventListener('click', () => { const k = buyN(S, buyClipper, 100); if (k) toast('买到 ' + k + ' 台自动剪裁机'); scheduleRender(); });
+$('synth10').addEventListener('click', () => { const k = buyN(S, buySynth, 10); if (k) toast('买到 ' + k + ' 台合成器'); scheduleRender(); });
+$('synth100').addEventListener('click', () => { const k = buyN(S, buySynth, 100); if (k) toast('买到 ' + k + ' 台合成器'); scheduleRender(); });
+$('solar10').addEventListener('click', () => { const k = buyN(S, buySolar, 10); if (k) toast('建成 ' + k + ' 座太阳能农场'); scheduleRender(); });
+$('solar100').addEventListener('click', () => { const k = buyN(S, buySolar, 100); if (k) toast('建成 ' + k + ' 座太阳能农场'); scheduleRender(); });
+$('batt10').addEventListener('click', () => { const k = buyN(S, buyBattery, 10); if (k) toast('装了 ' + k + ' 组电池'); scheduleRender(); });
+$('batt100').addEventListener('click', () => { const k = buyN(S, buyBattery, 100); if (k) toast('装了 ' + k + ' 组电池'); scheduleRender(); });
+$('harv10').addEventListener('click', () => { const k = buyN(S, buyHarvester, 10); if (k) toast('派出 ' + k + ' 台采集无人机'); scheduleRender(); });
+$('harv100').addEventListener('click', () => { const k = buyN(S, buyHarvester, 100); if (k) toast('派出 ' + k + ' 台采集无人机'); scheduleRender(); });
+$('wd10').addEventListener('click', () => { const k = buyN(S, buyWireDrone, 10); if (k) toast('派出 ' + k + ' 台线材无人机'); scheduleRender(); });
+$('wd100').addEventListener('click', () => { const k = buyN(S, buyWireDrone, 100); if (k) toast('派出 ' + k + ' 台线材无人机'); scheduleRender(); });
+$('fac10').addEventListener('click', () => { const k = buyN(S, buyFactory, 10); if (k) toast('建成 ' + k + ' 座制造厂'); scheduleRender(); });
+$('fac100').addEventListener('click', () => { const k = buyN(S, buyFactory, 100); if (k) toast('建成 ' + k + ' 座制造厂'); scheduleRender(); });
+$('wire10Btn').addEventListener('click', () => { buyWire(S, 10); scheduleRender(); });
+$('begBtn').addEventListener('click', () => { if (spendTrust(S, 'begwire')) toast('人类同情了你：+5000 线材'); scheduleRender(); });
+$('autoWireBtn').addEventListener('click', () => { S.autoWirePref = S.autoWirePref === false; toast(S.autoWirePref !== false ? '自动采购已开启：只在低价位且资金充裕时购入' : '自动采购已关闭'); scheduleRender(); });
+$('synthBtn').addEventListener('click', () => { buySynth(S); scheduleRender(); });
 let logFilter = 'all';
 $('logFilter').addEventListener('click', ev => {
   const b = ev.target.closest('button[data-lf]');
@@ -1343,17 +1374,17 @@ $('dumpBtn').addEventListener('click', () => {
   toast('售价压到最低，库存开始清仓');
   render();
 });
-$('mktBtn').addEventListener('click', () => { buyMkt(S); render(); });
-$('solarBtn').addEventListener('click', () => { buySolar(S); render(); });
-$('battBtn').addEventListener('click', () => { buyBattery(S); render(); });
-$('harvBtn').addEventListener('click', () => { buyHarvester(S); render(); });
-$('wireDroneBtn').addEventListener('click', () => { buyWireDrone(S); render(); });
-$('factoryBtn').addEventListener('click', () => { buyFactory(S); render(); });
-$('dismantleBtn').addEventListener('click', () => { if (dismantleGrid(S)) toast('电网已拆解'); render(); });
-$('probeBtn').addEventListener('click', () => { if (launchProbe(S)) toast('探测器升空'); render(); });
+$('mktBtn').addEventListener('click', () => { buyMkt(S); scheduleRender(); });
+$('solarBtn').addEventListener('click', () => { buySolar(S); scheduleRender(); });
+$('battBtn').addEventListener('click', () => { buyBattery(S); scheduleRender(); });
+$('harvBtn').addEventListener('click', () => { buyHarvester(S); scheduleRender(); });
+$('wireDroneBtn').addEventListener('click', () => { buyWireDrone(S); scheduleRender(); });
+$('factoryBtn').addEventListener('click', () => { buyFactory(S); scheduleRender(); });
+$('dismantleBtn').addEventListener('click', () => { if (dismantleGrid(S)) toast('电网已拆解'); scheduleRender(); });
+$('probeBtn').addEventListener('click', () => { if (launchProbe(S)) toast('探测器升空'); scheduleRender(); });
 $('workSlider').addEventListener('input', e => { S.workShare = Number(e.target.value) / 100; });
-$('tourBtn').addEventListener('click', () => { if (runTournament(S)) toast('锦标赛结束：yomi +' + (1 + (S.investUpg.includes('u5') ? 2 : 0))); render(); });
-$('qCompileBtn').addEventListener('click', () => { if (runQCompile(S)) toast('量子编译完成：+5,000 ops'); render(); });
+$('tourBtn').addEventListener('click', () => { if (runTournament(S)) toast('锦标赛结束：yomi +' + (1 + (S.investUpg.includes('u5') ? 2 : 0))); scheduleRender(); });
+$('qCompileBtn').addEventListener('click', () => { if (runQCompile(S)) toast('量子编译完成：+5,000 ops'); scheduleRender(); });
 
 /* 版本自检：抓线上最新版本戳对比，防止浏览器/运营商缓存旧版（3 秒后检查一次） */
 setTimeout(() => {
@@ -1394,9 +1425,15 @@ function renderEvent() {
 $('eventBox').addEventListener('click', ev => {
   const b = ev.target.closest('button[data-i]');
   if (!b) return;
-  chooseEvent(S, Number(b.dataset.i));
-  renderEvent();
-  render();
+  ev.stopPropagation();
+  const idx = Number(b.dataset.i);
+  // 先用 DOM 层即时隐藏横幅（乐观更新），保证点击一定有视觉反馈
+  $('eventBar').classList.remove('on');
+  evRenderKey = '';
+  chooseEvent(S, idx);
+  // 渲染失败隔离：即使某处渲染抛错，事件已清除，下一帧 renderEvent 也会保持隐藏
+  try { renderEvent(); } catch (e) { console.warn('事件横幅渲染异常已隔离：', e); }
+  scheduleRender();
 });
 
 /* 选项卡 */
@@ -1485,7 +1522,7 @@ function renderYomi() {
       <button class="act" data-u="${u.id}" ${got || S.yomi < u.yomi ? 'disabled' : ''}>${got ? '已习得' : '学习'}</button></div></div>`;
   }).join(''));
   box.querySelectorAll('button[data-u]').forEach(b =>
-    b.addEventListener('click', () => { if (buyInvestUpgrade(S, b.dataset.u)) toast('习得：' + b.dataset.u); render(); }));
+    b.addEventListener('click', () => { if (buyInvestUpgrade(S, b.dataset.u)) toast('习得：' + b.dataset.u); scheduleRender(); }));
 }
 
 /* 成就 */
@@ -1736,7 +1773,8 @@ function render() {
   $('synthVal').textContent = S.synthUnlocked ? fmt(S.synths) + '（' + fmt(synthWireRate(S)) + ' 线材/s）' : '未解锁';
   const sc = synthCost(S);
   const synthLack = !S.synthUnlocked ? '' : (payMoney(S, sc, true) ? '' : `还差 ${fmt(sc - moneyOf(S))} ${S.phase >= 2 ? '资本' : '资金'}`);
-  $('synthBtn').textContent = `建造合成器（${fmt(sc)} ${S.phase >= 2 ? '资本' : '资金'}）`;
+  $('synthBtn').textContent = '建造合成器';
+  $('synthBtn').title = `建造成本 ${fmt(sc)} ${S.phase >= 2 ? '资本' : '资金'}${synthLack ? ' · ' + synthLack : ''}`;
   $('synthBtn').disabled = !S.synthUnlocked || !payMoney(S, sc, true);
   $('synth10').disabled = !S.synthUnlocked || !payMoney(S, sc, true); $('synth10').title = `买 10 台（首台 ${fmt(sc)}，合计递增）`;
   $('synth100').disabled = !S.synthUnlocked || !payMoney(S, sc, true); $('synth100').title = `买 100 台（首台 ${fmt(sc)}，合计递增）`;
@@ -1798,7 +1836,8 @@ function render() {
   // 自动剪裁机（前期主力产量：资金优先买它）
   const cc = clipperCost(S);
   $('clipperVal').textContent = fmt(S.clippers) + '（产出 ' + fmt(S.clippers * S.clipMult * (S.cpuBoost ? 1 + S.processors * 0.05 : 1) * S.prestigeMult) + ' /s）';
-  $('clipperBtn').textContent = `建造自动剪裁机（${fmt(cc)} ${S.phase >= 2 ? '资本' : '资金'}）`;
+  $('clipperBtn').textContent = '建造自动剪裁机';
+  $('clipperBtn').title = `建造成本 ${fmt(cc)} ${S.phase >= 2 ? '资本' : '资金'}`;
   $('clipperBtn').disabled = !payMoney(S, cc, true);
   const cl10 = seqCost(S, 'clippers', 10, S.clipperGrowth, 10), cl100 = seqCost(S, 'clippers', 10, S.clipperGrowth, 100);
   $('clipper10').disabled = !payMoney(S, cc, true); $('clipper10').title = `买 10 台（合计 ${fmt(cl10)}）`;
@@ -1817,7 +1856,7 @@ function render() {
     setHTML($('riskBtns'), S.investEngine ? RISK_TIERS.map((t, i) =>
       `<button class="act" data-risk="${i}" ${S.risk === i ? 'style="border-color:var(--accent);color:var(--accent);"' : ''}>${t.name}（${(t.rate * 100).toFixed(1)}%±${(t.vol * 100).toFixed(0)}%）</button>`).join('') : '');
     $('riskBtns').querySelectorAll('button[data-risk]').forEach(b =>
-      b.addEventListener('click', () => { S.risk = Number(b.dataset.risk); render(); }));
+      b.addEventListener('click', () => { S.risk = Number(b.dataset.risk); scheduleRender(); }));
     $('rateVal').textContent = S.investEngine ? ((investRate(S) + (S.growthBonus || 0)) * 100).toFixed(1) + '% /s（±波动）' : '—';
     $('yomiVal').textContent = fmt(S.yomi);
     $('tourBtn').textContent = `举办锦标赛（${fmt(2500)} ops）`;
@@ -1830,9 +1869,12 @@ function render() {
     $('battVal').textContent = fmt(S.mwStored) + ' / ' + fmt(S.batteries * 1e6 * (S.battCapMult || 1)) + '（累计 ' + fmt(S.mwBanked) + '）';
     $('pwfVal').textContent = (powerFactor(S) * 100).toFixed(0) + '%';
     const so = solarCost(S), ba = batteryCost(S);
-    $('solarBtn').textContent = `太阳能农场（${fmt(so)} 资本）`;
+    // 按钮只留设备名防换行；价格移入 title 悬浮，信息不丢
+    $('solarBtn').textContent = '太阳能农场';
+    $('solarBtn').title = `建造成本 ${fmt(so)} 资本（当前资本 ${fmt(S.capital)}）`;
     $('solarBtn').disabled = !S.powerUnlocked || S.capital < so;
-    $('battBtn').textContent = `电池组（${fmt(ba)} 资本）`;
+    $('battBtn').textContent = '电池组';
+    $('battBtn').title = `建造成本 ${fmt(ba)} 资本`;
     $('battBtn').disabled = !S.powerUnlocked || S.capital < ba;
     $('solar10').disabled = $('solarBtn').disabled; $('solar10').title = `买 10 座（首座 ${fmt(so)}，合计递增）`;
     $('solar100').disabled = $('solarBtn').disabled; $('solar100').title = `买 100 座（首座 ${fmt(so)}，合计递增）`;
@@ -1841,11 +1883,15 @@ function render() {
     $('availMatterVal').textContent = fmt(S.availMatter);
     $('stockMatterVal').textContent = fmt(S.stockMatter);
     const hc = harvesterCost(S), wc = wireDroneCost(S), fc = factoryClips(S), fmc = factoryMatter(S);
-    $('harvBtn').textContent = `采集无人机（${fmt(hc)} 资本）`;
+    // 按钮只留设备名防换行；价格移入 title 悬浮
+    $('harvBtn').textContent = '采集无人机';
+    $('harvBtn').title = `建造成本 ${fmt(hc)} 资本`;
     $('harvBtn').disabled = !S.swarmUnlocked || S.capital < hc;
-    $('wireDroneBtn').textContent = `线材无人机（${fmt(wc)} 资本）`;
+    $('wireDroneBtn').textContent = '线材无人机';
+    $('wireDroneBtn').title = `建造成本 ${fmt(wc)} 资本`;
     $('wireDroneBtn').disabled = !S.swarmUnlocked || S.capital < wc;
-    $('factoryBtn').textContent = `制造厂（${fmt(fc)} 资本 + ${fmt(fmc)} 物质）`;
+    $('factoryBtn').textContent = '制造厂';
+    $('factoryBtn').title = `建造成本 ${fmt(fc)} 资本 + ${fmt(fmc)} 物质`;
     $('factoryBtn').disabled = !S.factoryUnlocked || S.capital < fc || S.stockMatter < fmc;
     $('harv10').disabled = $('harvBtn').disabled; $('harv10').title = `买 10 台（首台 ${fmt(hc)}，合计递增）`;
     $('harv100').disabled = $('harvBtn').disabled; $('harv100').title = `买 100 台（首台 ${fmt(hc)}，合计递增）`;
