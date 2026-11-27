@@ -376,7 +376,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v5.4 · 2026-11-27 23:00 构建';
+const VERSION = 'v5.5 · 2026-11-27 23:25 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -1318,16 +1318,19 @@ function renderQGrid() {
   // 点击交给统一事件委托（v5.3）
 }
 
-/* 动态按钮统一事件委托（v5.3）
-   根因：setHTML 在内容未变时跳过 DOM 重建，旧代码仍在每次 render 里对同一批按钮
+/* 动态按钮统一事件委托（v5.3 建立，v5.5 加固）
+   根因1：setHTML 在内容未变时跳过 DOM 重建，旧代码仍在每次 render 里对同一批按钮
    addEventListener；主循环 100ms 一次，几秒后一个按钮就叠了几十个处理器，
    点一下被执行 N 次——信任点只有 3 点，于是一次点击全扣光。
-   现在只在 document 上绑一次，按 data-* 分发：按一下永远只执行一下。 */
-document.addEventListener('click', e => {
-  const b = e.target.closest && e.target.closest(
-    'button[data-tk],button[data-at],button[data-qi],button[data-t],button[data-p],button[data-u],button[data-risk]');
-  if (!b || b.disabled) return;
-  const d = b.dataset;
+   根因2（v5.5）：原方案在 click 时判定 b.disabled。投资资本/资源每帧波动，按钮会在
+   mousedown 与 mouseup 之间变 disabled；而 disabled 元素不派发 mouseup/click，
+   于是点击被浏览器直接吞掉——表现为「有时点学习/执行没反应」。
+   修复：动作提前到 pointerdown（按下瞬间按钮必可用）立即执行；随后的 click 只负责
+   键盘触发（Enter/Space，detail=0），并跳过紧随 pointerdown 的鼠标 click 防重复。
+   按一下永远只执行一次。 */
+const DELEGATE_SEL = 'button[data-tk],button[data-at],button[data-qi],button[data-t],button[data-p],button[data-u],button[data-risk]';
+let _pointerFiredAt = 0;  // 最近一次 pointerdown 实际执行动作的时刻（防 click 重复）
+function dispatchDelegated(d) {
   if (d.tk !== undefined) {
     if (spendTrust(S, d.tk)) toast(TRUST_ACTIONS[d.tk].name + '完成');
     scheduleRender();
@@ -1350,6 +1353,22 @@ document.addEventListener('click', e => {
   } else if (d.risk !== undefined) {
     S.risk = Number(d.risk); scheduleRender();
   }
+}
+// 指针按下：立即执行（此时按钮尚可用，不受后续 disabled 影响）。仅主键/触摸。
+document.addEventListener('pointerdown', e => {
+  if (e.button !== 0 && e.pointerType !== 'touch') return;  // 忽略右键/中键
+  const b = e.target.closest && e.target.closest(DELEGATE_SEL);
+  if (!b || b.disabled) return;
+  _pointerFiredAt = performance.now();
+  dispatchDelegated({ ...b.dataset });
+});
+// click：只兜键盘触发（detail=0）；鼠标 click 若紧跟 pointerdown 则跳过防重复
+document.addEventListener('click', e => {
+  if (e.detail !== 0) return;  // 鼠标/触摸 click 已由 pointerdown 处理
+  const b = e.target.closest && e.target.closest(DELEGATE_SEL);
+  if (!b || b.disabled) return;
+  if (performance.now() - _pointerFiredAt < 800) return;
+  dispatchDelegated({ ...b.dataset });
 });
 
 /* 主面板事件 */
@@ -1543,7 +1562,13 @@ function renderProjects(listEl, ps) {
 function renderYomi() {
   const box = $('yomiList');
   if (!S.yomiOn) { box.innerHTML = ''; return; }
-  setHTML(box, '<h2>读心升级</h2>' + INVEST_UPGRADES.map(u => {
+  // 已习得的排到末尾（v5.5）：未习得按 yomi 门槛升序在前，已习得内部同样按门槛升序，顺序稳定。
+  const ordered = INVEST_UPGRADES.slice().sort((a, b) => {
+    const ga = S.investUpg.includes(a.id) ? 1 : 0;
+    const gb = S.investUpg.includes(b.id) ? 1 : 0;
+    return ga - gb || a.yomi - b.yomi;
+  });
+  setHTML(box, '<h2>读心升级</h2>' + ordered.map(u => {
     const got = S.investUpg.includes(u.id);
     return `<div class="proj"><div class="pname">${u.name}</div><div class="pdesc">${u.desc}</div>
       <div class="pmeta">yomi ${u.yomi}
