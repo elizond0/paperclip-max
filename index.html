@@ -348,15 +348,22 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v4.1 · 2026-11-26 23:55 构建';
+const VERSION = 'v5.0 · 2026-11-27 13:18 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
+/* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
+   保持相对节奏不变（产值与门槛同步缩放），避免后期天文数字撑爆 DOM。
+   阶段一/资金/资本/探测器等中小数值不缩放。 */
+const BIG = 1e6;
+const big = n => n / BIG;   // 定义大数门槛时统一包一层
 function fmt(n) {
-  if (n == null || !isFinite(n)) return '∞';
+  if (n == null) return '—';
+  if (!isFinite(n)) return n > 0 ? '∞' : (n < 0 ? '-∞' : '—');
   const neg = n < 0; n = Math.abs(n);
   if (n < 1000) return (neg ? '-' : '') + (Math.round(n * 100) / 100).toFixed(2);
   let e = Math.floor(Math.log10(n) / 3);
-  e = Math.min(e, SUF.length - 1);
+  // 兜底：超出后缀表改用科学计数法，防止 toFixed 生成几百位字符串拖垮渲染
+  if (e >= SUF.length) return (neg ? '-' : '') + n.toExponential(2);
   return (neg ? '-' : '') + (n / Math.pow(10, e * 3)).toFixed(2) + ' ' + SUF[e];
 }
 
@@ -386,7 +393,7 @@ function newState() {
     mwStored: 0, mwBanked: 0,
     harvesters: 0, harvCostN: 0, wireDrones: 0, wdCostN: 0, factories: 0, facCostN: 0,
     workShare: 0.7, giftMeter: 0, boredom: false, entertained: false, momentum: false,
-    availMatter: 4e27, stockMatter: 0,
+    scaleV5: true, availMatter: big(4e27), stockMatter: 0,
     // 太空
     probes: 0, probeN: 0, exploration: 0, spaceMatter: 0,
     attr: { speed: 3, explore: 3, replication: 3, hazard: 3, combat: 3, factoryAttr: 0, droneProd: 0 },
@@ -445,7 +452,7 @@ function batteryCost(s) { return 2e7 * Math.pow(1.5, s.battCostN); }
 function harvesterCost(s) { return 1e9 * Math.pow(1.12, s.harvCostN); }
 function wireDroneCost(s) { return 1e9 * Math.pow(1.12, s.wdCostN); }
 function factoryClips(s) { return 1e9 * Math.pow(1.08, s.facCostN); }
-function factoryMatter(s) { return 5e20 * Math.pow(1.03, s.facCostN); }
+function factoryMatter(s) { return big(5e20) * Math.pow(1.03, s.facCostN); }
 function probeCost(s) { return 5e6 * Math.pow(1.13, Math.floor(s.probes)); }
 
 /* ---- 电力（阶段 ≥2，需解锁） ---- */
@@ -470,8 +477,8 @@ function droneEff(s) {
   if (s.boredom && !s.entertained) return 0.3;
   return 1;
 }
-function harvestRate(s) { return s.harvesters * 1e20 * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult; }
-function wireDroneRate(s) { return s.wireDrones * 1e20 * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult; }
+function harvestRate(s) { return s.harvesters * big(1e20) * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult; }
+function wireDroneRate(s) { return s.wireDrones * big(1e20) * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult; }
 function factoryRate(s) {
   if (!s.factoryUnlocked) return 0;
   return s.factories * 1e10 * (1 + s.attr.factoryAttr * 0.1) * s.prestigeMult;
@@ -750,7 +757,7 @@ const ACHIEVEMENTS = [
   { id: 'a20', name: '量子赌徒', desc: 'qops 累计达到 5000', cond: s => s.qopsEver >= 5000 },
   { id: 'a21', name: '电力大亨', desc: '电池组累计充入 1000 万 MWs', cond: s => s.mwBanked >= 1e7 },
   { id: 'a22', name: '无人之群', desc: '无人机总数达到 5000', cond: s => (s.harvesters + s.wireDrones) >= 5000 },
-  { id: 'a23', name: '星球粉碎者', desc: '地球可用物质降至 50% 以下', cond: s => s.availMatter <= 2e27 },
+  { id: 'a23', name: '星球粉碎者', desc: '地球可用物质降至 50% 以下', cond: s => s.availMatter <= big(2e27) },
   { id: 'a24', name: '漂流者战争', desc: '在战争中损失 1 万台探测器', cond: s => s.battleLosses >= 1e4 },
   { id: 'a25', name: '属性大师', desc: '属性分配累计 20 点', cond: s => s.attrSpent >= 20 },
   { id: 'a26', name: '另一个宇宙', desc: '完成一次宇宙轮回', cond: s => s.runs >= 1 },
@@ -1030,7 +1037,12 @@ function tick(s, dt) {
       const t = RISK_TIERS[s.risk];
       let vol = t.vol * (s.investUpg.includes('u3') ? 0.5 : 1);
       const r = investRate(s) + (s.growthBonus || 0) + (Math.random() - 0.5) * 2 * vol;
-      s.capital *= Math.max(0.1, 1 + r * dt);
+      /* v5.0 复利阻尼：资本超过 1e10 后把指数增长转为线性增长（增长率 ∝ 1/capital），
+         根除后期 capital → Infinity 导致 fmt 生成几百位字符串、DOM 卡死的隐患。
+         1e10 远高于所有项目/成就门槛（最高 5e5），前中期节奏完全不变。 */
+      const CAP_DAMP = 1e10;
+      const damp = s.capital > CAP_DAMP ? CAP_DAMP / s.capital : 1;
+      s.capital *= Math.max(0.1, 1 + r * damp * dt);
       if (s.capital < 10) s.capital += 10 * dt; // 保底注资：防止乘法归零死锁
     }
   }
@@ -1053,7 +1065,7 @@ function tick(s, dt) {
     const dE = Math.min(100 - s.exploration, Math.max(0, explRate) * dt);
     s.exploration += dE;
     // 探索带来深空物质
-    s.spaceMatter += dE * 1e26 * (1 + s.attr.droneProd * 0.1);
+    s.spaceMatter += dE * big(1e26) * (1 + s.attr.droneProd * 0.1);
     // 复制（消耗回形针库存）
     if (s.probes > 0) {
       const want = s.probes * (s.repBase + s.attr.replication * 0.004) * dt;
@@ -1145,7 +1157,17 @@ function offlineProgress(s, sec) {
   gainMoney(s, sold * s.price);
   s.totalSold += sold;
   const capBefore = s.capital;
-  if (s.investEngine) s.capital *= Math.pow(Math.max(0.1, 1 + investRate(s) * 0.5), Math.min(sec, 3600));
+  // v5.0：离线复利同样加阻尼，避免 8 小时离线把资本推到 Infinity
+  if (s.investEngine) {
+    const CAP_DAMP = 1e10;
+    const r = investRate(s) * 0.5;
+    const steps = Math.min(sec, 3600);
+    if (s.capital <= CAP_DAMP) {
+      s.capital *= Math.pow(Math.max(0.1, 1 + r), Math.min(steps, Math.max(0, Math.log(CAP_DAMP / Math.max(1, s.capital)) / Math.log(1 + r))));
+    }
+    // 超出阻尼线后线性补益，保持有限
+    if (s.capital > CAP_DAMP) s.capital += r * CAP_DAMP * steps * 0.5;
+  }
   const invGain = s.investEngine ? s.capital - capBefore : 0;
   const mins = Math.round(sec / 60);
   const detail = `离线 ${mins >= 60 ? (mins / 60).toFixed(1) + ' 小时' : mins + ' 分钟'}（50% 效率，上限 8 小时）：`
@@ -1166,6 +1188,13 @@ function load() {
       const data = JSON.parse(raw);
       const s = Object.assign(newState(), data);
       if (s.ended) return newState();
+      // v5.0 存档迁移：物质类字段统一缩小 1e6（与 BIG 缩放一致），只迁移一次
+      if (data.scaleV5 !== true) {
+        ['availMatter', 'stockMatter', 'spaceMatter'].forEach(k => {
+          if (typeof s[k] === 'number' && isFinite(s[k])) s[k] /= BIG;
+        });
+        s.scaleV5 = true;
+      }
       const elapsed = (Date.now() - (data.savedAt || Date.now())) / 1000;
       const off = offlineProgress(s, elapsed);
       if (off) setTimeout(() => toast('📦 离线收益：' + off.detail, 6000), 800);
