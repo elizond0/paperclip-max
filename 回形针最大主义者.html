@@ -139,15 +139,14 @@
 
   footer { text-align: center; color: var(--dim); font-size: 13px; padding: 16px 0 20px; }
   .hint { color: var(--dim); font-size: 14px; margin-top: 8px; }
-  /* v5.4 布局防抖：动态提示区固定占位高度。内容 0↔N 行切换时若高度跟着变，
-     下方按钮会在点击瞬间被抽走（wire=0 时自动产量行消失 → 线材购买按钮点不到）。
-     固定 min-height 后内容怎么变都不影响后续元素位置。 */
-  /* 自动产量信息恒占两行：固定 height+overflow 彻底锁死高度，全文保留在 title 悬浮不丢信息。
-     不用 line-clamp——其内容行数变化会触发首次布局重算，仍会产生 5px 级位移。 */
+  /* v5.4 布局防抖：仅 makeHint 紧邻线材购买按钮、且内容随 wire 每帧 0↔N 行切换，
+     必须锁死高度（固定 height+overflow，全文保留在 title），否则点击瞬间按钮被抽走。
+     不用 line-clamp——其内容行数变化会触发首次布局重算，仍有 5px 级位移。 */
   #makeHint { height: 45px; overflow: hidden; }
-  #synthHint { min-height: 68px; }  /* 合成器解锁说明恒占三行 */
-  #mktHint { min-height: 45px; }    /* 滞销提示恒占两行 */
-  #batchHint, #swarmHint { min-height: 22px; } /* 单行提示恒占一行 */
+  /* v5.7：其余提示是低频状态提示（解锁/滞销/缺钱），不紧邻高频点击按钮。
+     旧版给它们统一设 min-height 导致内容为空时仍占 22~68px 大片空白（截图反馈）。
+     改为 :empty 时完全折叠：有内容才占位，无内容不浪费空间。 */
+  #synthHint:empty, #mktHint:empty, #batchHint:empty, #swarmHint:empty { display: none; }
   /* 悬浮提示：小图标，桌面 hover / 手机点按显示 */
   .tip { display: inline-flex; align-items: center; justify-content: center; position: relative;
     width: 18px; height: 18px; min-width: 18px; margin-left: 5px; border-radius: 50%;
@@ -225,16 +224,16 @@
 
     <div class="panel" id="mktPanel">
       <h2>市场</h2>
-      <div class="row"><span class="k">售价</span><span class="v" id="priceVal"></span></div>
+      <div class="row"><span class="k">售价<span class="tip" data-tk="mk_price">?<span class="tipbox"></span></span></span><span class="v" id="priceVal"></span></div>
       <input type="range" id="priceSlider" min="1" max="200" value="25">
       <div class="btnrow">
         <button class="act sm" id="bestPriceBtn" title="按当前产量与需求自动定位利润最优售价">⚡ 最优定价</button>
         <button class="act sm" id="dumpBtn" title="把售价压到最低，清空库存换资金">清库存</button>
       </div>
       <div class="row"><span class="k">营销等级</span><span class="v" id="mktVal"></span></div>
-      <div class="row"><span class="k">预计销量</span><span class="v" id="demandVal"></span></div>
+      <div class="row"><span class="k">预计销量<span class="tip" data-tk="mk_demand">?<span class="tipbox"></span></span></span><span class="v" id="demandVal"></span></div>
       <div class="hint" id="mktHint"></div>
-      <div class="row"><span class="k">对手份额</span><span class="v" id="rivalVal">—</span></div>
+      <div class="row"><span class="k">对手份额<span class="tip" data-tk="mk_rival">?<span class="tipbox"></span></span></span><span class="v" id="rivalVal">—</span></div>
       <button class="act" id="mktBtn">升级营销</button>
     </div>
 
@@ -376,7 +375,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v5.6 · 2026-11-28 00:55 构建';
+const VERSION = 'v5.7 · 2026-11-28 01:10 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -1302,17 +1301,28 @@ function renderAttrs() {
   if (S.phase < 3) { box.innerHTML = ''; return; }
   setHTML(box, '<h2>探测器属性（1 信任 / 点 · 累计超 8 点产生价值漂移）</h2>' +
     Object.keys(ATTRS).map(k =>
-      `<div class="row"><span class="k">${ATTRS[k]} Lv.${S.attr[k]}</span>
+      `<div class="row"><span class="k">${ATTRS[k]} Lv.${S.attr[k]}<span class="tip" data-tk="at_${k}">?<span class="tipbox"></span></span></span>
        <button class="act" data-at="${k}" ${S.trust < 1 ? 'disabled' : ''}>+1</button></div>`).join('') +
-    `<div class="hint">价值漂移 ${S.drift.toFixed(2)} · 漂流者 ${fmt(S.drifters)}</div>`);
+    `<div class="hint">价值漂移 ${S.drift.toFixed(2)}<span class="tip" data-tk="at_drift">?<span class="tipbox"></span></span> · 漂流者 ${fmt(S.drifters)}</div>`);
   // 点击交给统一事件委托（v5.3）
 }
 
 /* 量子网格 */
 function renderQGrid() {
-  const g = $('qgrid');
-  if (!S.quantumOn) { g.innerHTML = ''; $('qHint').style.display = 'none'; return; }
-  $('qHint').style.display = '';
+  const g = $('qgrid'), hint = $('qHint');
+  if (!S.quantumOn) { g.style.display = 'none'; g.innerHTML = ''; hint.style.display = 'none'; return; }
+  // v5.7：量子自动化是不可逆的单次科技，解锁后 ↑ 态自动收取、重排自动结算，
+  // 4×4 网格不再需要手点，隐藏它省去视觉占用与无谓点击；qops 仍在下方数值行持续显示。
+  if (S.qauto) {
+    g.style.display = 'none';
+    g.innerHTML = '';
+    hint.textContent = '⚡ 量子自动化运行中：↑ 态方块自动收取、重排时自动结算，无需手点。qops 持续累积。';
+    hint.style.display = '';
+    return;
+  }
+  g.style.display = '';
+  hint.textContent = '点击「↑」态方块获得 qops。量子列会周期性重排。';
+  hint.style.display = '';
   setHTML(g, S.qtiles.map((up, i) =>
     `<button class="${up ? 'up' : 'down'}" data-qi="${i}">${up ? '↑' : '↓'}</button>`).join(''));
   // 点击交给统一事件委托（v5.3）
@@ -1578,39 +1588,37 @@ function renderYomi() {
 }
 
 /* 成就 */
-/* 成就进度：按成就描述里的数值目标估算进度条 */
-const ACH_METRIC = [
-  [/点击/, s => s.totalClicks],
-  [/销售|卖出/, s => s.totalSold],
-  [/处理器/, s => s.processors],
-  [/内存/, s => s.memory],
-  [/探测器/, s => s.probes],
-  [/电池/, s => s.mwBanked],
-  [/信任/, s => s.trustEver],
-  [/资金|资本/, s => moneyOf(s)],
-  [/制造|产量|回形针/, s => s.totalClips],
-];
-function achMetricOf(a) {
-  for (const [re, f] of ACH_METRIC) if (re.test(a.desc)) return f;
-  return null;
-}
-function achTargetOf(a) {
-  const nums = (a.desc.match(/[\d,]+(?:\.\d+)?\s*[KMBT]?/g) || []).map(t => {
-    const m = t.trim().match(/^([\d.]+)\s*([KMBT]?)$/); if (!m) return null;
-    const mult = { '': 1, K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[m[2]] || 1;
-    return parseFloat(m[1].replace(/,/g, '')) * mult;
-  }).filter(v => v != null && v > 1);
-  return nums.length ? Math.max(...nums) : null;
+/* 成就进度：显式声明指标与目标（v5.7）。
+   旧版用正则从 desc 猜数字，只认 K/M/B/T、不认中文「万/亿」：
+   「探测器达到 100 万」被解析成 100，进度条瞬间满格却没解锁——玩家以为条件满足了。
+   现在每个成就在 ACHIEVEMENTS 上直接声明 metric(取当前值) 与 target(门槛)，杜绝猜测。 */
+const ACH_PROGRESS = {
+  a1:  [s => s.totalClicks, 1],          a2:  [s => s.totalClips, 1e3],
+  a3:  [s => s.totalClips, 1e6],         a4:  [s => s.totalClips, 1e9],
+  a5:  [s => s.clippers, 1],             a6:  [s => s.clippers, 10],
+  a7:  [s => s.clippers, 100],           a8:  [s => Math.max(s.funds, s.capital), 1e3],
+  a9:  [s => s.wireBought, 100],         a10: [s => s.synths, 1],
+  a11: [s => s.trustEver, 10],           a12: [s => s.creativity, 100],
+  a14: [s => s.capital, 1e6],            a17: [s => s.probes, 1e6],
+  a18: [s => s.eventsSeen, 10],          a19: [s => s.crits, 20],
+  a20: [s => s.qopsEver, 5000],          a21: [s => s.mwBanked, 1e7],
+  a22: [s => s.harvesters + s.wireDrones, 5000],
+  a24: [s => s.battleLosses, 1e4],       a25: [s => s.attrSpent, 20],
+};
+function achProgressOf(a) {
+  const p = ACH_PROGRESS[a.id];
+  if (!p) return null;
+  const cur = p[0](S), tgt = p[1];
+  return { cur, tgt, pct: Math.min(100, Math.max(0, cur / tgt * 100)) };
 }
 function renderAch() {
   setHTML($('achList'), ACHIEVEMENTS.map(a => {
     const got = S.ach.includes(a.id);
     let prog = '';
     if (!got) {
-      const f = achMetricOf(a), tgt = achTargetOf(a);
-      if (f && tgt) {
-        const cur = f(S), pct = Math.min(100, cur / tgt * 100);
-        prog = `<div class="gbar" style="height:14px;margin-top:4px;"><span style="line-height:12px;">${fmt(cur)} / ${fmt(tgt)}</span><i style="width:${pct.toFixed(1)}%"></i></div>`;
+      const pr = achProgressOf(a);
+      if (pr) {
+        prog = `<div class="gbar" style="height:14px;margin-top:4px;"><span style="line-height:12px;">${fmt(pr.cur)} / ${fmt(pr.tgt)}</span><i style="width:${pr.pct.toFixed(1)}%"></i></div>`;
       }
     }
     return `<div class="a ${got ? 'got' : 'locked'}">
@@ -1845,6 +1853,19 @@ function render() {
     qops: S.qCompile
       ? '<b>qops（量子操作点）</b><br>来源：点击 ↑ 态方块 / 光子芯片被动 / 量子自动化。<br>用途：「量子编译」2,000 qops → 5,000 ops（按钮在上方）；太空阶段可研究「量子制导」换取探索 +50%。'
       : '<b>qops（量子操作点）</b><br>来源：点击 ↑ 态方块（「量子自动化」可免手点）。<br>用途：解锁「量子编译器」项目后可换成 ops，太空阶段还有大用。',
+    // v5.7 探测器属性说明（阶段三，每点 1 信任）
+    at_speed: '<b>速度</b><br>提高深空探索速率：每级让探索速度与「探索」的乘积额外 +0.1 系数（基础 0.5）。想更快推进探索度，速度与探索一起加最有效。',
+    at_explore: '<b>探索</b><br>直接乘算探测器探索速率，每级 +1 倍率。探索度上涨可解锁深空项目、加快发现新区域。',
+    at_replication: '<b>复制</b><br>提高探测器自我复制率：每级 +0.004 基础复制率，探测器数量增长更快。预算紧张时优先加它扩大规模。',
+    at_hazard: '<b>避险</b><br>降低太空灾害造成的探测器损失：每级使灾害损失 ×0.6（3 级为基准）。漂流者战争、陨石带等事件里能显著减少损失。',
+    at_combat: '<b>战斗</b><br>漂流者战争属性：每级使己方探测器损失 ×0.65、对漂流者伤害 ×1.35（3 级为基准）。战争频繁时优先加。',
+    at_factoryAttr: '<b>工厂优化</b><br>每级让制造厂回形针产量 +10%。后期回形针主要靠制造厂产出，产能瓶颈时优先加它。',
+    at_droneProd: '<b>采集优化</b><br>每级让太空物质采集速度 +10%。物质用于深空建造，想加速扩张时加它。',
+    at_drift: '<b>价值漂移</b><br>属性累计投入超过 8 点后，每多点使漂移 +0.05。漂移越高，敌对「漂流者」滋生越快，会持续消耗探测器。别只顾堆属性而忽视漂移。',
+    // v5.7 市场关键文本说明
+    mk_price: '<b>售价</b><br>需求与售价的平方成反比：价格越高，销量越低。滑块上限 $2.00（沿用原版低价策略）。库存滞销时点「⚡ 最优定价」自动找平衡点。',
+    mk_demand: '<b>预计销量</b><br>每秒预计卖出的回形针数，由「营销等级 × 2 ÷ 售价² × 需求系数」决定，再受对手份额影响。实际销量还受产能上限约束。',
+    mk_rival: '<b>对手份额</b><br>竞争对手抢占的市场比例，份额越高你的销量越低。买断竞争对手后份额清零；买断后营销仍可继续提升需求。',
   };
   document.querySelectorAll('.tip').forEach(t => { t.querySelector('.tipbox').innerHTML = TIPS[t.dataset.tk]; });
   const qcb = $('qCompileBtn');
