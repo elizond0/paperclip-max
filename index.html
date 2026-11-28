@@ -257,6 +257,7 @@
         <button class="act" id="exportBtn">导出</button>
         <button class="act" id="importBtn">导入</button>
         <button class="act" id="resetBtn">重置</button>
+        <button class="act" id="autoEventBtn" style="margin-top:6px;">自动处理事件：关</button>
       </div>
     </div>
   </div>
@@ -336,12 +337,22 @@
         <div class="row"><span class="k">深空物质库存</span><span class="v" id="spaceMatterVal">0</span></div>
         <div class="row"><span class="k">价值漂移 / 漂流者</span><span class="v" id="driftVal">0 / 0</span></div>
         <button class="act" id="probeBtn" style="margin-top:6px;">制造探测器</button>
+        <button class="act" id="purgeBtn" style="margin-top:6px;">清剿漂流者（牺牲 5% 探测器）</button>
         <div id="attrBox" style="margin-top:10px;"></div>
         <div id="spaceProjList" style="margin-top:10px;"></div>
+        <button class="act" id="pgBtn2" style="margin-top:10px;display:none;">跃迁 · 轮回（探索完成）</button>
       </div>
       <div class="tabpane" id="pane-ach">
         <h2>成就</h2>
         <div class="ach" id="achList"></div>
+      </div>
+      <div class="tabpane" id="pane-meta">
+        <h2>传承 · 局外成长</h2>
+        <div class="row"><span class="k">宇宙印记</span><span class="v" id="metaMarks">0</span></div>
+        <div class="hint">印记每次轮回结算（累计制造 + 成就 + 探索完成），永久保留。升级效果从下一轮生效。</div>
+        <div id="metaList" style="margin-top:10px;"></div>
+        <h2 style="margin-top:14px;">生涯统计</h2>
+        <div id="careerStats"></div>
       </div>
       <div class="tabpane" id="pane-log">
         <h2>日志</h2>
@@ -375,7 +386,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v5.8 · 2026-11-28 01:19 构建';
+const VERSION = 'v6.0 · 2026-11-28 15:52 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -398,6 +409,8 @@ function newState() {
   return {
     phase: 1, ended: false, ending: '', explComplete: false,
     runs: 0, prestigeMult: 1,
+    /* v6.0 局外成长：跨轮次保留的数据。doPrestige 复制它，load 的 ended 分支也保留。 */
+    meta: { marks: 0, upgrades: { startCapital: 0, output: 0, probe: 0, trust: 0, resist: 0 }, lifetimeClips: 0 },
     time: 0,
     clips: 0, totalClips: 0, totalSold: 0, totalClicks: 0, crits: 0, critChance: 0.02,
     wire: 100, wireMult: 1, wireBought: 0, autoWire: false, autoWirePref: true, bailoutOnce: false,
@@ -425,6 +438,8 @@ function newState() {
     probes: 0, probeN: 0, exploration: 0, spaceMatter: 0,
     attr: { speed: 3, explore: 3, replication: 3, hazard: 3, combat: 3, factoryAttr: 0, droneProd: 0 },
     attrSpent: 0, drift: 0, drifters: 0, battleLosses: 0, warSeen: false,
+    /* v6.0：自动属性分配（量子自动化后仍要手点，太累）；漂流者掠夺累计展示 */
+    attrAuto: false, autoEvent: false, raidedMatter: 0,
     repBase: 0.0006, exploreMult: 1,
     eventsSeen: 0, eventTimer: 90, activeEvent: null,
     projectsDone: [], ach: [],
@@ -579,8 +594,22 @@ const ATTRS = {
 function allocAttr(s, key) {
   if (s.phase < 3 || !ATTRS[key] || s.trust < 1) return false;
   s.trust -= 1; s.attr[key] += 1; s.attrSpent += 1;
-  s.drift = Math.max(0, (s.attrSpent - 8)) * 0.05;
+  // v6.0：局外「漂移抗性」每级抵消 0.01 漂移
+  s.drift = Math.max(0, (s.attrSpent - 8) * 0.05 - 0.01 * metaLv(s, 'resist'));
   return true;
+}
+/* v6.0：量子自动化/post-scarcity 后信任点易积压，按「优先补最低属性」自动分配 */
+function autoAllocAttr(s) {
+  if (s.phase < 3 || s.trust < 1) return 0;
+  const keys = Object.keys(ATTRS);
+  let n = 0;
+  while (s.trust >= 1 && n < 1000) {
+    const min = Math.min.apply(null, keys.map(k => s.attr[k]));
+    const k = keys.find(x => s.attr[x] === min);
+    if (!allocAttr(s, k)) break;
+    n++;
+  }
+  return n;
 }
 
 /* ---- 量子计算网格（4×4，点击 ↑ 态方块得 qops） ---- */
@@ -750,6 +779,12 @@ function spawnEvent(s) {
   const pool = EVENTS.filter(e => e.phase === s.phase); // 只抽当前阶段的事件
   if (!pool.length) pool.push(EVENTS[0]);
   s.activeEvent = pool[Math.floor(Math.random() * pool.length)];
+  // v6.0：后期反复点事件是纯体力活，可选自动处理（固定选第一项，玩家主动开启）
+  if (s.autoEvent) {
+    const title = s.activeEvent.title;
+    chooseEvent(s, 0);
+    pushLog(s, '自动处理「' + title + '」：选择第一项。');
+  }
 }
 function chooseEvent(s, idx) {
   if (!s.activeEvent) return null;
@@ -1097,13 +1132,25 @@ function tick(s, dt) {
 
   // 10. 太空（阶段 3）
   if (s.phase >= 3) {
+    // 探测效率：局外「探测器效率」每级 +10%（探索与深空采集共用）
+    const pm = metaProbeMult(s);
     // 探索推进（量子制导：qops 存量提供最高 +50% 加成）
     const qBoost = s.qGuided ? 1 + Math.min(0.5, (s.qops || 0) / 1e5) : 1;
-    const explRate = s.probes * s.attr.explore * (0.5 + 0.1 * s.attr.speed) * 2e-8 * s.exploreMult * s.prestigeMult * qBoost;
-    const dE = Math.min(100 - s.exploration, Math.max(0, explRate) * dt);
-    s.exploration += dE;
-    // 探索带来深空物质
-    s.spaceMatter += dE * big(1e26) * (1 + s.attr.droneProd * 0.1);
+    const explRate = s.probes * s.attr.explore * (0.5 + 0.1 * s.attr.speed) * 2e-8 * s.exploreMult * s.prestigeMult * qBoost * pm;
+    /* v6.0：探索满后探测器不再闲置——转为「深空采集舰队」持续产出深空物质。
+       旧版 dE=min(100-exploration,…) 恒为 0，深空物质产出直接归零，探测器只剩损耗。 */
+    if (s.exploration < 100) {
+      const dE = Math.min(100 - s.exploration, Math.max(0, explRate) * dt);
+      s.exploration += dE;
+      s.spaceMatter += dE * big(1e26) * (1 + s.attr.droneProd * 0.1);
+    } else if (s.probes > 0) {
+      // 漂流者吞噬一部分采集产出（每 1 万漂流者吞 1%，上限 90%），让战争代价可见
+      const raidPct = Math.min(0.9, s.drifters * 1e-6);
+      const deepRate = s.probes * big(1e16) * (1 + s.attr.droneProd * 0.1) * s.prestigeMult * pm * (1 - raidPct);
+      const add = deepRate * dt;
+      s.spaceMatter += add;
+      s.raidedMatter = (s.raidedMatter || 0) + add * raidPct;
+    }
     // 复制（消耗回形针库存）
     if (s.probes > 0) {
       const want = s.probes * (s.repBase + s.attr.replication * 0.004) * dt;
@@ -1164,6 +1211,53 @@ function tick(s, dt) {
   }
 }
 
+/* ---- v6.0 局外成长：宇宙印记与永久升级 ---- */
+const META_UPGRADES = [
+  { id: 'startCapital', name: '起始资本', desc: '每级让新轮次初始资金/线材 +50%', base: 8 },
+  { id: 'output', name: '全局产出', desc: '每级让全部产出 +5%（与轮回倍率叠乘）', base: 12 },
+  { id: 'probe', name: '探测器效率', desc: '每级让探索与深空采集速度 +10%', base: 15 },
+  { id: 'trust', name: '初始信任', desc: '每级让新轮次起始信任 +1', base: 20 },
+  { id: 'resist', name: '漂移抗性', desc: '每级让价值漂移 -0.01（下限 0）', base: 25 },
+];
+function metaLv(s, key) { return (s.meta && s.meta.upgrades && s.meta.upgrades[key]) || 0; }
+function metaOutputMult(s) { return 1 + 0.05 * metaLv(s, 'output'); }
+function metaProbeMult(s) { return 1 + 0.10 * metaLv(s, 'probe'); }
+function metaStartMult(s) { return 1 + 0.50 * metaLv(s, 'startCapital'); }
+function metaCost(key, lv) {
+  const u = META_UPGRADES.find(x => x.id === key);
+  return u ? Math.round(u.base * Math.pow(1.8, lv)) : Infinity;
+}
+function buyMetaUpgrade(s, key) {
+  if (!s.meta || !META_UPGRADES.some(u => u.id === key)) return false;
+  const lv = metaLv(s, key), cost = metaCost(key, lv);
+  if (s.meta.marks < cost) return false;
+  s.meta.marks -= cost;
+  s.meta.upgrades[key] = lv + 1;
+  return true;
+}
+function settleMarks(s) {
+  const clips = Math.max(1, s.totalClips || 0);
+  const gain = Math.max(1, Math.floor(Math.log10(clips) * 2) + (s.ach ? s.ach.length : 0) + (s.explComplete ? 5 : 0));
+  if (!s.meta) s.meta = newState().meta;
+  s.meta.lifetimeClips = (s.meta.lifetimeClips || 0) + clips;
+  s.meta.marks = (s.meta.marks || 0) + gain;
+  return gain;
+}
+
+/* v6.0 漂流者博弈：牺牲探测器换清剿 + 夺回深空物质 */
+function purgeDrifters(s) {
+  if (s.phase < 3 || !(s.drifters > 1) || s.probes < 10) return false;
+  const sacrifice = Math.max(1, Math.floor(s.probes * 0.05));
+  s.probes = Math.max(0, s.probes - sacrifice);
+  const power = Math.min(0.95, 0.3 + 0.05 * (s.attr.combat - 3) + 0.3 * metaProbeMult(s));
+  const killed = s.drifters * power;
+  s.drifters = Math.max(0, s.drifters - killed);
+  const loot = big(1e18) * killed * 0.5;
+  s.spaceMatter += loot;
+  pushLog(s, `清剿漂流者：牺牲 ${fmt(sacrifice)} 台探测器，消灭 ${fmt(killed)} 名，夺回 ${fmt(loot)} 深空物质。`, 'hi');
+  return true;
+}
+
 /* ---- 结局选择 ---- */
 function chooseEnding(s, which) {
   if (!s.explComplete) return false;
@@ -1171,14 +1265,18 @@ function chooseEnding(s, which) {
   return true;
 }
 function doPrestige(s) {
+  const gain = settleMarks(s);
   const fresh = newState();
   fresh.runs = s.runs + 1;
-  fresh.prestigeMult = Math.pow(1.5, fresh.runs);
+  fresh.prestigeMult = Math.pow(1.5, fresh.runs) * metaOutputMult(s);
+  fresh.meta = s.meta;
   fresh.ach = s.ach.slice();
   fresh.eventsSeen = s.eventsSeen;
-  fresh.funds = 10000 * fresh.runs;
-  fresh.wire = 5000 * fresh.runs;
-  pushLog(fresh, '轮回 #' + fresh.runs + ' 开始。产出 ×' + fresh.prestigeMult.toFixed(1) + '，初始资金 ' + fmt(fresh.funds) + '。成就已保留。', 'hi');
+  const t0 = metaLv(s, 'trust');
+  fresh.trust = t0; fresh.trustEver = t0;
+  fresh.funds = 10000 * fresh.runs * metaStartMult(s);
+  fresh.wire = 5000 * fresh.runs * metaStartMult(s);
+  pushLog(fresh, '轮回 #' + fresh.runs + ' 开始。产出 ×' + fresh.prestigeMult.toFixed(1) + '，初始资金 ' + fmt(fresh.funds) + '。本轮结算宇宙印记 +' + gain + '。', 'hi');
   return fresh;
 }
 
@@ -1225,7 +1323,19 @@ function load() {
     if (raw) {
       const data = JSON.parse(raw);
       const s = Object.assign(newState(), data);
-      if (s.ended) return newState();
+      // v6.0：老存档 attr 可能缺新字段，整体覆盖会留下 undefined 并在乘法中变 NaN，必须按字段合并
+      s.attr = Object.assign({}, newState().attr, s.attr || {});
+      // v6.0：局外成长必须跨 epoch 存活；旧档（含 ended 档）补齐默认结构，不能因结局重开而清空
+      const defMeta = newState().meta;
+      if (!s.meta || typeof s.meta !== 'object') s.meta = defMeta;
+      s.meta.upgrades = Object.assign({}, defMeta.upgrades, s.meta.upgrades || {});
+      s.meta.marks = Number(s.meta.marks) || 0;
+      s.meta.lifetimeClips = Number(s.meta.lifetimeClips) || 0;
+      if (s.ended) {
+        const fresh = newState();
+        fresh.meta = s.meta;
+        return fresh;
+      }
       // v5.0 存档迁移：物质类字段统一缩小 1e6（与 BIG 缩放一致），只迁移一次
       if (data.scaleV5 !== true) {
         ['availMatter', 'stockMatter', 'spaceMatter'].forEach(k => {
@@ -1310,7 +1420,8 @@ function renderAttrs() {
     Object.keys(ATTRS).map(k =>
       `<div class="row"><span class="k">${ATTRS[k]} Lv.${S.attr[k]}<span class="tip" data-tk="at_${k}">?<span class="tipbox"></span></span></span>
        <button class="act" data-at="${k}" ${S.trust < 1 ? 'disabled' : ''}>+1</button></div>`).join('') +
-    `<div class="hint">价值漂移 ${S.drift.toFixed(2)}<span class="tip" data-tk="at_drift">?<span class="tipbox"></span></span> · 漂流者 ${fmt(S.drifters)}</div>`);
+    `<div class="hint">价值漂移 ${S.drift.toFixed(2)}<span class="tip" data-tk="at_drift">?<span class="tipbox"></span></span> · 漂流者 ${fmt(S.drifters)}${S.explComplete ? '（吞噬 ' + Math.min(90, S.drifters * 1e-4).toFixed(1) + '% 深空采集）' : ''}</div>` +
+    `<button class="act" data-aa="1" ${S.trust < 1 ? 'disabled' : ''} style="margin-top:6px;">自动分配信任（优先补最低属性）</button>`);
   // 点击交给统一事件委托（v5.3）
 }
 
@@ -1345,7 +1456,7 @@ function renderQGrid() {
    修复：动作提前到 pointerdown（按下瞬间按钮必可用）立即执行；随后的 click 只负责
    键盘触发（Enter/Space，detail=0），并跳过紧随 pointerdown 的鼠标 click 防重复。
    按一下永远只执行一次。 */
-const DELEGATE_SEL = 'button[data-tk],button[data-at],button[data-qi],button[data-t],button[data-p],button[data-u],button[data-risk]';
+const DELEGATE_SEL = 'button[data-tk],button[data-at],button[data-qi],button[data-t],button[data-p],button[data-u],button[data-risk],button[data-meta],button[data-aa]';
 let _pointerFiredAt = 0;  // 最近一次 pointerdown 实际执行动作的时刻（防 click 重复）
 function dispatchDelegated(d) {
   if (d.tk !== undefined) {
@@ -1369,6 +1480,14 @@ function dispatchDelegated(d) {
     scheduleRender();
   } else if (d.risk !== undefined) {
     S.risk = Number(d.risk); scheduleRender();
+  } else if (d.meta !== undefined) {
+    const u = META_UPGRADES.find(x => x.id === d.meta);
+    if (buyMetaUpgrade(S, d.meta)) toast('永久升级：' + (u ? u.name : d.meta) + ' Lv.' + metaLv(S, d.meta));
+    scheduleRender();
+  } else if (d.aa !== undefined) {
+    const n = autoAllocAttr(S);
+    if (n) toast('自动分配 ' + n + ' 点信任');
+    scheduleRender();
   }
 }
 // 指针按下：立即执行（此时按钮尚可用，不受后续 disabled 影响）。仅主键/触摸。
@@ -1453,6 +1572,18 @@ $('harvBtn').addEventListener('click', () => { buyHarvester(S); scheduleRender()
 $('wireDroneBtn').addEventListener('click', () => { buyWireDrone(S); scheduleRender(); });
 $('factoryBtn').addEventListener('click', () => { buyFactory(S); scheduleRender(); });
 $('dismantleBtn').addEventListener('click', () => { if (dismantleGrid(S)) toast('电网已拆解'); scheduleRender(); });
+$('purgeBtn').addEventListener('pointerdown', () => { if (purgeDrifters(S)) toast('清剿完成'); scheduleRender(); });
+$('autoEventBtn').addEventListener('pointerdown', () => {
+  S.autoEvent = !S.autoEvent;
+  $('autoEventBtn').textContent = '自动处理事件：' + (S.autoEvent ? '开（固定第一项）' : '关');
+  toast('事件自动处理已' + (S.autoEvent ? '开启' : '关闭'));
+});
+// v6.0：常驻转生入口——弹窗标记是一次性引导，不能成为唯一入口（旧版刷新后永久消失）
+$('pgBtn2').addEventListener('pointerdown', () => {
+  S._endChoiceShown = false;
+  renderEnding();
+  if (!$('ending').classList.contains('on')) showFinal();
+});
 $('probeBtn').addEventListener('click', () => { if (launchProbe(S)) toast('探测器升空'); scheduleRender(); });
 $('workSlider').addEventListener('input', e => { S.workShare = Number(e.target.value) / 100; });
 $('tourBtn').addEventListener('click', () => { if (runTournament(S)) toast('锦标赛结束：yomi +' + (1 + (S.investUpg.includes('u5') ? 2 : 0))); scheduleRender(); });
@@ -1516,6 +1647,7 @@ const TABS = [
   { id: 'space', label: '太空', show: () => S.phase >= 3 },
   { id: 'ach', label: '成就', show: () => true },
   { id: 'log', label: '日志', show: () => true },
+  { id: 'meta', label: '传承', show: () => true },
 ];
 let curTab = 'projects';
 function renderTabs() {
@@ -1673,16 +1805,19 @@ function renderEnding() {
       `你已经把已知宇宙的每个角落都标上了回形针工厂。\n\n一个声音从宇宙之外传来：\n「还有别的宇宙。去那里，继续。」\n\n或者，你也可以榨干这个宇宙的最后一丝价值。\n\n累计制造：${fmt(S.totalClips)}\n探测器：${fmt(S.probes)}\n成就：${S.ach.length}/${ACHIEVEMENTS.length}`;
     // 轮回引导：明确告知保留项与下一轮加成
     const nextRuns = S.runs + 1;
-    const nextMult = Math.pow(1.5, nextRuns);
+    const nextMult = Math.pow(1.5, nextRuns) * metaOutputMult(S);
+    const gainPreview = Math.max(1, Math.floor(Math.log10(Math.max(1, S.totalClips)) * 2) + S.ach.length + 5);
     const guide = `\n\n———— 关于轮回 ————\n`
-      + `保留：${S.ach.length}/${ACHIEVEMENTS.length} 项成就 · 已处理事件数 · 里程碑记录\n`
+      + `本轮结算：宇宙印记 +${gainPreview}（累计制造 + 成就 + 探索完成）\n`
+      + `保留：${S.ach.length}/${ACHIEVEMENTS.length} 项成就 · 印记 ${S.meta.marks} · 已购永久升级 · 事件记录\n`
       + `重置：资金/资本、线材、设备、项目进度、地图（重新从制造阶段开始）\n`
-      + `加成：全局产出 ×${nextMult.toFixed(2)}（第 ${nextRuns} 轮，每轮 ×1.5 叠乘）\n`
-      + `起步：初始资金 ${fmt(10000 * nextRuns)}、线材 ${fmt(5000 * nextRuns)}\n`
-      + `预计下一轮通关：约 ${Math.max(8, Math.round(45 / Math.pow(1.5, S.runs)))} 分钟`;
+      + `加成：全局产出 ×${nextMult.toFixed(2)}（轮回 ×${Math.pow(1.5, nextRuns).toFixed(2)} × 局外 ×${metaOutputMult(S).toFixed(2)}）\n`
+      + `起步：初始资金 ${fmt(10000 * nextRuns * metaStartMult(S))}、线材 ${fmt(5000 * nextRuns * metaStartMult(S))}、信任 ${metaLv(S, 'trust')}\n`
+      + `预计下一轮通关：约 ${Math.max(8, Math.round(45 / Math.pow(1.5, S.runs)))} 分钟（局外升级会进一步缩短）\n`
+      + `提示：探索完成后太空页有常驻「跃迁 · 轮回」按钮，随时可回来，不必等弹窗。`;
     $('endText').textContent += guide;
     $('endBtns').innerHTML =
-      `<button class="act" id="pgBtn">跃迁 · 另一个宇宙（第 ${nextRuns} 轮 · 产出 ×${nextMult.toFixed(2)}）</button>
+      `<button class="act" id="pgBtn">跃迁 · 另一个宇宙（第 ${nextRuns} 轮 · 产出 ×${nextMult.toFixed(2)} · 印记 +${gainPreview}）</button>
        <button class="act" id="mxBtn">榨取极限 · 在此终结</button>`;
     $('ending').classList.add('on');
     $('pgBtn').addEventListener('click', () => {
@@ -1820,6 +1955,24 @@ function renderGoals() {
   }).join(''));
 }
 
+/* v6.0 传承面板：局外印记、永久升级、生涯统计 */
+function renderMeta() {
+  const m = S.meta || newState().meta;
+  $('metaMarks').textContent = fmt(m.marks);
+  setHTML($('metaList'), META_UPGRADES.map(u => {
+    const lv = metaLv(S, u.id), cost = metaCost(u.id, lv);
+    return `<div class="proj"><div class="pname">${u.name} Lv.${lv}</div><div class="pdesc">${u.desc}</div>
+      <div class="pmeta">成本 ${fmt(cost)} 印记
+      <button class="act" data-meta="${u.id}" ${m.marks < cost ? 'disabled' : ''}>升级</button></div></div>`;
+  }).join(''));
+  setHTML($('careerStats'),
+    `<div class="row"><span class="k">当前轮次</span><span class="v">第 ${S.runs + 1} 轮</span></div>` +
+    `<div class="row"><span class="k">轮回倍率</span><span class="v">×${S.prestigeMult.toFixed(2)}</span></div>` +
+    `<div class="row"><span class="k">生涯累计制造</span><span class="v">${fmt((m.lifetimeClips || 0) + S.totalClips)}</span></div>` +
+    `<div class="row"><span class="k">本轮时长</span><span class="v">${fmtEta(S.time)}</span></div>` +
+    `<div class="row"><span class="k">漂流者吞噬</span><span class="v">${fmt(S.raidedMatter || 0)} 深空物质</span></div>`);
+}
+
 /* 主渲染 */
 function render() {
   renderStats();
@@ -1827,6 +1980,8 @@ function render() {
   renderTrustSpend();
   renderQGrid();
   renderAttrs();
+  renderMeta();
+  $('autoEventBtn').textContent = '自动处理事件：' + (S.autoEvent ? '开（固定第一项）' : '关');
 
   $('wireVal').textContent = fmt(S.wire);
   const wp = wirePriceOf(S);
@@ -1874,7 +2029,7 @@ function render() {
     at_combat: '<b>战斗</b><br>漂流者战争属性：每级使己方探测器损失 ×0.65、对漂流者伤害 ×1.35（3 级为基准）。战争频繁时优先加。',
     at_factoryAttr: '<b>工厂优化</b><br>每级让制造厂回形针产量 +10%。后期回形针主要靠制造厂产出，产能瓶颈时优先加它。',
     at_droneProd: '<b>采集优化</b><br>每级让太空物质采集速度 +10%。物质用于深空建造，想加速扩张时加它。',
-    at_drift: '<b>价值漂移</b><br>属性累计投入超过 8 点后，每多点使漂移 +0.05。漂移越高，敌对「漂流者」滋生越快，会持续消耗探测器。别只顾堆属性而忽视漂移。',
+    at_drift: '<b>价值漂移</b><br>属性累计投入超过 8 点后，每多点使漂移 +0.05（局外「漂移抗性」每级抵消 0.01）。漂移滋生「漂流者」：既与舰队内战损耗探测器，探索完成后还会吞噬最多 90% 的深空采集产出。可用「清剿漂流者」牺牲探测器换回资源，或研究「同步集群」抑制漂移。',
     // v5.7 市场关键文本说明
     mk_price: '<b>售价</b><br>需求与售价的平方成反比：价格越高，销量越低。滑块上限 $2.00（沿用原版低价策略）。库存滞销时点「⚡ 最优定价」自动找平衡点。',
     mk_demand: '<b>预计销量</b><br>每秒预计卖出的回形针数，由「营销等级 × 2 ÷ 售价² × 需求系数」决定，再受对手份额影响。实际销量还受产能上限约束。',
@@ -2016,20 +2171,40 @@ function render() {
     $('explVal').textContent = S.exploration.toFixed(2) + '%';
     const pct = Math.min(100, S.exploration);
     $('explBar').style.width = pct.toFixed(2) + '%';
-    // 探索速率与预计剩余时间
-    const qBoost = S.qGuided ? 1.5 : 1;
-    const explRate = S.probes * S.attr.explore * (0.5 + 0.1 * S.attr.speed) * 2e-8 * S.exploreMult * S.prestigeMult * qBoost;
-    const etaTxt = explRate > 1e-9 ? '约 ' + fmtEta((100 - S.exploration) / explRate) : '—（无探测器或探索属性为 0）';
-    $('explBarText').textContent = pct.toFixed(1) + '% · 推进 ' + fmt(explRate) + '%/s · 剩余 ' + etaTxt;
-    // 漂流者预警（漂移越高越危险）
-    $('explHint').textContent = S.drift > 0.05
-      ? `⚠ 价值漂移 ${S.drift.toFixed(2)} 已滋生 ${fmt(S.drifters)} 名漂流者：它们会与舰队内战损耗战斗力。研究「同步集群」（创造力 2 万）可抑制。`
-      : (S.boredom ? '⚠ 集群无聊中，生产效率下降。' : '');
+    const pm = metaProbeMult(S);
+    const qBoost = S.qGuided ? 1 + Math.min(0.5, (S.qops || 0) / 1e5) : 1;
+    const explRate = S.probes * S.attr.explore * (0.5 + 0.1 * S.attr.speed) * 2e-8 * S.exploreMult * S.prestigeMult * qBoost * pm;
+    const raidPct = Math.min(0.9, S.drifters * 1e-6);
+    if (S.exploration < 100) {
+      const etaTxt = explRate > 1e-9 ? '约 ' + fmtEta((100 - S.exploration) / explRate) : '—（无探测器或探索属性为 0）';
+      $('explBarText').textContent = pct.toFixed(1) + '% · 推进 ' + fmt(explRate) + '%/s · 剩余 ' + etaTxt;
+    } else {
+      // v6.0：探索完成后改为显示深空采集速率，不再显示无意义的「剩余 —」
+      const deepRate = S.probes * big(1e16) * (1 + S.attr.droneProd * 0.1) * S.prestigeMult * pm * (1 - raidPct);
+      $('explBarText').textContent = '100.0% · 已完成 · 深空采集 +' + fmt(deepRate) + '/s'
+        + (raidPct > 0 ? '（漂流者吞噬 ' + (raidPct * 100).toFixed(1) + '%）' : '');
+    }
+    $('explHint').textContent = S.exploration >= 100
+      ? (S.drifters > 1
+        ? `⚠ 漂流者 ${fmt(S.drifters)} 正吞噬 ${(raidPct * 100).toFixed(1)}% 深空采集；点「清剿漂流者」牺牲探测器换回资源。`
+        : '✅ 宇宙已探索完毕，探测器已转为深空采集舰队。')
+      : (S.drift > 0.05
+        ? `⚠ 价值漂移 ${S.drift.toFixed(2)} 已滋生 ${fmt(S.drifters)} 名漂流者：它们会与舰队内战损耗战斗力。研究「同步集群」（创造力 2 万）可抑制。`
+        : (S.boredom ? '⚠ 集群无聊中，生产效率下降。' : ''));
     $('spaceMatterVal').textContent = fmt(S.spaceMatter);
     $('driftVal').textContent = S.drift.toFixed(2) + ' / ' + fmt(S.drifters);
-    const pc = probeCost(S);
-    $('probeBtn').textContent = `制造探测器（${fmt(pc)} 回形针 + 1万 ops）`;
-    $('probeBtn').disabled = S.clips < pc || S.ops < 1e4;
+    // 探索满后制造探测器成本溢出为 Infinity，必须隐藏按钮，否则出现「∞ 回形针」废按钮
+    $('probeBtn').style.display = S.exploration >= 100 ? 'none' : '';
+    if (S.exploration < 100) {
+      const pc = probeCost(S);
+      $('probeBtn').textContent = `制造探测器（${fmt(pc)} 回形针 + 1万 ops）`;
+      $('probeBtn').disabled = S.clips < pc || S.ops < 1e4;
+    }
+    $('purgeBtn').style.display = S.drifters > 1 ? '' : 'none';
+    $('purgeBtn').disabled = S.probes < 10;
+    const purgePower = Math.min(0.95, 0.3 + 0.05 * (S.attr.combat - 3) + 0.3 * pm);
+    $('purgeBtn').title = `牺牲 ${fmt(Math.max(1, Math.floor(S.probes * 0.05)))} 台探测器，消灭约 ${(purgePower * 100).toFixed(0)}% 漂流者并夺回深空物质`;
+    $('pgBtn2').style.display = S.explComplete && !S.ended ? '' : 'none';
     $('dismantleBtn').style.display = '';
     renderProjects($('spaceProjList'), visibleProjects().filter(p => p.phase === 3));
   }
