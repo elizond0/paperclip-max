@@ -301,8 +301,8 @@
             <button class="act sm" id="batt100">×100</button>
           </div>
         </div>
-        <div class="row" style="margin-top:8px;"><span class="k">可用物质（地球）</span><span class="v" id="availMatterVal"></span></div>
-        <div class="row"><span class="k">已采物质库存</span><span class="v" id="stockMatterVal"></span></div>
+        <div class="row" style="margin-top:8px;"><span class="k">可用物质（地球）<span class="tip" data-tk="earthMatter">?<span class="tipbox"></span></span></span><span class="v" id="availMatterVal"></span></div>
+        <div class="row"><span class="k">已采物质库存<span class="tip" data-tk="stockMatter">?<span class="tipbox"></span></span></span><span class="v" id="stockMatterVal"></span></div>
         <div class="devgrp">
           <div class="devline">
             <button class="act" id="harvBtn">采集无人机</button>
@@ -334,7 +334,7 @@
         <div class="row"><span class="k">已探索宇宙</span><span class="v" id="explVal">0%</span></div>
         <div class="gbar" style="height:20px;margin:6px 0 8px;"><span id="explBarText" style="line-height:18px;">0% · 目标 100%</span><i id="explBar" style="width:0%"></i></div>
         <div class="hint" id="explHint"></div>
-        <div class="row"><span class="k">深空物质库存</span><span class="v" id="spaceMatterVal">0</span></div>
+        <div class="row"><span class="k">深空物质库存<span class="tip" data-tk="deepMatter">?<span class="tipbox"></span></span></span><span class="v" id="spaceMatterVal">0</span></div>
         <div class="row"><span class="k">价值漂移 / 漂流者</span><span class="v" id="driftVal">0 / 0</span></div>
         <button class="act" id="probeBtn" style="margin-top:6px;">制造探测器</button>
         <button class="act" id="purgeBtn" style="margin-top:6px;">清剿漂流者（牺牲 5% 探测器）</button>
@@ -387,7 +387,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v6.1 · 2026-11-28 16:30 构建';
+const VERSION = 'v6.2 · 2026-11-28 16:55 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -449,6 +449,12 @@ function newState() {
   };
 }
 
+/* v6.2 tooltip 防闪烁：render 每帧都会跑，若 title 含实时数字（探测器/资本每帧变），
+   反复给 title 赋值会让浏览器 tooltip 一直在重建，鼠标悬停时文字闪烁无法阅读。
+   统一走 setTitle：内容没变就不写 DOM；真正含实时数字的按钮另把数字移出 title。 */
+function setTitle(el, txt) {
+  if (el && el.title !== txt) el.title = txt;
+}
 function pushLog(s, msg, kind) {
   s.log.push({ t: Date.now(), m: msg, k: kind || '' });
   if (s.log.length > 200) s.log.shift();
@@ -472,7 +478,9 @@ function bestPriceOf(s) {
   const prod = Math.max(1e-6, autoRate(s));                 // 当前产能（个/s）
   const d = s.mkt * 2 * s.demandMult * (s.phase >= 2 && !s.rivalGone ? (1 - s.rivalShare) : 1);
   // 让产能恰好被市场消化完的售价：demand(price) = prod
-  return Math.sqrt(d / prod);
+  // v6.2：0.01 是「清库存」专用地板价；「最优定价」保留 0.05 下限，
+  // 避免后期产能远超需求上限时永远算出 0.01 的贱卖价（需求 ∝ 1/价²，数学最优恒为地板价）。
+  return Math.max(0.05, Math.sqrt(d / prod));
 }
 function demandOf(s) {
   let d = s.mkt * 2 / (s.price * s.price) * s.demandMult;
@@ -486,22 +494,39 @@ function payMoney(s, amt, dry) {
   if (s.funds < amt) return false; if (!dry) s.funds -= amt; return true;
 }
 function gainMoney(s, amt) { if (s.phase >= 2) s.capital += amt; else s.funds += amt; }
-function clipperCost(s) { return 10 * Math.pow(s.clipperGrowth, s.clippers); }
-function mktCost(s) { return 100 * Math.pow(1.8, s.mkt - 1); }
-function synthCost(s) { return 5000 * Math.pow(1.25, s.synthCostN); }
+/* v6.2 成本软上限：前 knee 台保留原指数手感，之后转为「每台线性 +1 个拐点价」。
+   纯指数曲线到第 200~500 台会需要几十万年以上（资本受 CAP_DAMP 限制只能线性增长），
+   使「多次购买」类功能在后期数学上失效。拐点取正常通关购买量，故前期手感与既有测试完全不变。
+   注意：拆解回笼的 histCost 必须用同一曲线求和，否则会重现「买→拆→低价买回」套利。 */
+function softCost(base, growth, n, knee) {
+  n = Math.max(0, Math.floor(n));
+  if (n <= knee) return base * Math.pow(growth, n);
+  const kneeCost = base * Math.pow(growth, knee);
+  return kneeCost * (1 + (n - knee));
+}
+function softHistCost(base, growth, n, knee) {
+  let total = 0;
+  for (let i = 0; i < Math.max(0, Math.floor(n)); i++) total += softCost(base, growth, i, knee);
+  return total;
+}
+const COST_KNEE = { clip: 110, mkt: 12, synth: 40, mega: 55, solar: 10, batt: 8, harv: 70, wd: 70, fac: 40, probe: 130 };
+function clipperCost(s) { return softCost(10, s.clipperGrowth, s.clippers, COST_KNEE.clip); }
+function mktCost(s) { return softCost(100, 1.8, s.mkt - 1, COST_KNEE.mkt); }
+function synthCost(s) { return softCost(5000, 1.25, s.synthCostN, COST_KNEE.synth); }
 /* v6.1：u4「半导体路线图」承诺 1.45→1.32，旧版 megaCost 硬编码 1.45 使该科技完全无效。
    改为读取 megaGrowth(s)，买下 u4 后立即降低后续超级剪裁机涨价速度。 */
-function megaCost(s) { return 20000 * Math.pow(megaGrowth(s), s.megaCostN); }
-function solarCost(s) { return 5e6 * Math.pow(1.6, s.solarCostN); }
-function batteryCost(s) { return 2e7 * Math.pow(1.5, s.battCostN); }
+function megaCost(s) { return softCost(20000, megaGrowth(s), s.megaCostN, COST_KNEE.mega); }
+function solarCost(s) { return softCost(5e6, 1.6, s.solarCostN, COST_KNEE.solar); }
+function batteryCost(s) { return softCost(2e7, 1.5, s.battCostN, COST_KNEE.batt); }
 /* v5.8：原 1.12 指数增长叠加 CAP_DAMP=1e10 后资本转线性增长，第 60 台起攒钱时间指数拉长
    （第 100 台需约 18.6 小时），玩家普遍反馈「越到后期越买不起」。降到与制造厂相同的 1.08，
    数值体系统一；不动 CAP_DAMP 以保留 v5.0 的防 Infinity 设计。 */
-function harvesterCost(s) { return 1e9 * Math.pow(1.08, s.harvCostN); }
-function wireDroneCost(s) { return 1e9 * Math.pow(1.08, s.wdCostN); }
-function factoryClips(s) { return 1e9 * Math.pow(1.08, s.facCostN); }
-function factoryMatter(s) { return big(5e20) * Math.pow(1.03, s.facCostN); }
-function probeCost(s) { return 5e6 * Math.pow(1.13, Math.floor(s.probes)); }
+function harvesterCost(s) { return softCost(1e9, 1.08, s.harvCostN, COST_KNEE.harv); }
+function wireDroneCost(s) { return softCost(1e9, 1.08, s.wdCostN, COST_KNEE.wd); }
+function factoryClips(s) { return softCost(1e9, 1.08, s.facCostN, COST_KNEE.fac); }
+/* 制造厂物质成本 1.03 也设拐点，避免海量制造厂时物质成本指数爆炸 */
+function factoryMatter(s) { return softCost(big(5e20), 1.03, s.facCostN, 200); }
+function probeCost(s) { return softCost(5e6, 1.13, Math.floor(s.probes), COST_KNEE.probe); }
 
 /* ---- 电力（阶段 ≥2，需解锁） ---- */
 function powerGen(s) { return s.powerUnlocked ? s.solarFarms * 5000 * (s.momentum ? 1.2 : 1) : Infinity; }
@@ -996,9 +1021,9 @@ function buyFactory(s) {
   s.capital -= cc; s.stockMatter -= cm; s.factories += 1; s.facCostN += 1; return true;
 }
 /* ---- 批量购买 ---- */
-function seqCost(s, nKey, base, growth, n) { // 未来 n 台合计价（几何级数求和）
+function seqCost(s, nKey, base, growth, n, knee) { // 未来 n 台合计价（软上限曲线求和）
   let total = 0, N = s[nKey];
-  for (let i = 0; i < n; i++) total += base * Math.pow(growth, N + i);
+  for (let i = 0; i < n; i++) total += (knee == null ? base * Math.pow(growth, N + i) : softCost(base, growth, N + i, knee));
   return total;
 }
 function histCost(base, growth, n) { // 已购 n 台的原始总投入（从第 0 台起），用于拆解折算防套利
@@ -1021,8 +1046,8 @@ function dismantleGrid(s) {
   /* v6.1 反套利：旧版 rec = 台数 ×「当前单价」×0.5，而拆解把 solarCostN/battCostN 归零，
      于是「买 N 台 → 拆解回笼 N×高价×0.5 → 按低价重新买回」可以反复刷回形针。
      改为按历史投入的几何级数和折算（真实本金），且 40% 折价，拆解后不再有套利空间。 */
-  const rec = histCost(5e6, 1.6, s.solarFarms) * 0.4
-            + histCost(2e7, 1.5, s.batteries) * 0.4;
+  const rec = softHistCost(5e6, 1.6, s.solarFarms, COST_KNEE.solar) * 0.4
+            + softHistCost(2e7, 1.5, s.batteries, COST_KNEE.batt) * 0.4;
   s.solarFarms = 0; s.batteries = 0; s.solarCostN = 0; s.battCostN = 0;
   s.mwStored = 0;
   s.clips += rec; s.totalClips += rec;
@@ -1303,11 +1328,16 @@ function legacyMarks(s) {
   const b = legacyMarkBreakdown(s);
   return b.qops + b.matter + b.yomi + b.creativity + b.drones;
 }
-function settleMarks(s) {
+/* v6.2：纯预估函数（无副作用），供轮回按钮/结局弹窗实时显示本轮可得印记。
+   必须与 settleMarks 用同一套公式，避免「预告 N、实得 M」的不一致。 */
+function previewMarks(s) {
   const clips = Math.max(1, s.totalClips || 0);
   const base = Math.max(1, Math.floor(Math.log10(clips) * 2) + (s.ach ? s.ach.length : 0) + (s.explComplete ? 5 : 0));
-  const legacy = legacyMarks(s);
-  const gain = base + legacy;
+  return base + legacyMarks(s);
+}
+function settleMarks(s) {
+  const gain = previewMarks(s);
+  const clips = Math.max(1, s.totalClips || 0);
   if (!s.meta) s.meta = newState().meta;
   s.meta.lifetimeClips = (s.meta.lifetimeClips || 0) + clips;
   s.meta.marks = (s.meta.marks || 0) + gain;
@@ -1632,9 +1662,15 @@ $('logFilter').addEventListener('click', ev => {
 });
 $('priceSlider').addEventListener('input', e => { S.price = Number(e.target.value) / 100; });
 $('bestPriceBtn').addEventListener('click', () => {
+  // v6.2：库存为 0 时没有产能可消化，「最优价」会退化成最低价 0.01 误导玩家。
+  // 无库存时先生产，定价维持不变并给出明确说明。
+  if (S.clips < 1 && autoRate(S) < 1) {
+    toast('当前无库存也无产能：先买剪裁机生产，再点最优定价。');
+    return;
+  }
   const bp = bestPriceOf(S);
   S.price = Math.max(0.01, Math.min(2, Math.round(bp * 100) / 100));
-  toast('已定位最优售价 ' + S.price.toFixed(2) + '（产能刚好被市场消化）');
+  toast('已定位最优售价 ' + S.price.toFixed(2) + '（产能刚好被市场消化，最低 0.05 避免贱卖）');
   render();
 });
 $('dumpBtn').addEventListener('click', () => {
@@ -1883,7 +1919,7 @@ function renderEnding() {
     // 轮回引导：明确告知保留项与下一轮加成
     const nextRuns = S.runs + 1;
     const nextMult = Math.pow(1.5, nextRuns) * metaOutputMult(S);
-    const gainPreview = Math.max(1, Math.floor(Math.log10(Math.max(1, S.totalClips)) * 2) + S.ach.length + 5) + legacyMarks(S);
+    const gainPreview = previewMarks(S);
     const guide = `\n\n———— 关于轮回 ————\n`
       + `本轮结算：宇宙印记 +${gainPreview}（累计制造 + 成就 + 探索完成 + 后期资源折算 +${legacyMarks(S)}）\n`
       + `保留：${S.ach.length}/${ACHIEVEMENTS.length} 项成就 · 印记 ${S.meta.marks} · 已购永久升级 · 事件记录\n`
@@ -2076,19 +2112,19 @@ function render() {
   awb.style.color = S.autoWirePref !== false ? 'var(--accent)' : 'var(--dim)';
   // 按钮文字保持简短防换行；价格放 title 悬浮与上方「现价」行，信息不丢
   $('wireBtn').textContent = '购买 ×1000';
-  $('wireBtn').title = `单价 ${fmt(wp)} ${S.phase >= 2 ? '资本' : '资金'}`;
+  setTitle($('wireBtn'), `单价 ${fmt(wp)} ${S.phase >= 2 ? '资本' : '资金'}`);
   $('wireBtn').disabled = !payMoney(S, wp, true);
   $('wire10Btn').textContent = '×10 组';
-  $('wire10Btn').title = `10 组合计 ${fmt(wp * 10)} ${S.phase >= 2 ? '资本' : '资金'}`;
+  setTitle($('wire10Btn'), `10 组合计 ${fmt(wp * 10)} ${S.phase >= 2 ? '资本' : '资金'}`);
   $('wire10Btn').disabled = !payMoney(S, wp * 10, true);
   $('synthVal').textContent = S.synthUnlocked ? fmt(S.synths) + '（' + fmt(synthWireRate(S)) + ' 线材/s）' : '未解锁';
   const sc = synthCost(S);
   const synthLack = !S.synthUnlocked ? '' : (payMoney(S, sc, true) ? '' : `还差 ${fmt(sc - moneyOf(S))} ${S.phase >= 2 ? '资本' : '资金'}`);
   $('synthBtn').textContent = '建造合成器';
-  $('synthBtn').title = `建造成本 ${fmt(sc)} ${S.phase >= 2 ? '资本' : '资金'}${synthLack ? ' · ' + synthLack : ''}`;
+  setTitle($('synthBtn'), `建造成本 ${fmt(sc)} ${S.phase >= 2 ? '资本' : '资金'}${synthLack ? ' · ' + synthLack : ''}`);
   $('synthBtn').disabled = !S.synthUnlocked || !payMoney(S, sc, true);
-  $('synth10').disabled = !S.synthUnlocked || !payMoney(S, sc, true); $('synth10').title = `买 10 台（首台 ${fmt(sc)}，合计递增）`;
-  $('synth100').disabled = !S.synthUnlocked || !payMoney(S, sc, true); $('synth100').title = `买 100 台（首台 ${fmt(sc)}，合计递增）`;
+  $('synth10').disabled = !S.synthUnlocked || !payMoney(S, sc, true); setTitle($('synth10'), `买 10 台（首台 ${fmt(sc)}，合计递增）`);
+  $('synth100').disabled = !S.synthUnlocked || !payMoney(S, sc, true); setTitle($('synth100'), `买 100 台（首台 ${fmt(sc)}，合计递增）`);
   $('batchHint').textContent = synthLack;
   $('synthHint').textContent = S.synthUnlocked ? '' :
     (S.totalClips >= 50000
@@ -2117,6 +2153,10 @@ function render() {
     mk_price: '<b>售价</b><br>需求与售价的平方成反比：价格越高，销量越低。滑块上限 $2.00（沿用原版低价策略）。库存滞销时点「⚡ 最优定价」自动找平衡点。',
     mk_demand: '<b>预计销量</b><br>每秒预计卖出的回形针数，由「营销等级 × 2 ÷ 售价² × 需求系数」决定，再受对手份额影响。实际销量还受产能上限约束。',
     mk_rival: '<b>对手份额</b><br>竞争对手抢占的市场比例，份额越高你的销量越低。买断竞争对手后份额清零；买断后营销仍可继续提升需求。',
+    // v6.2 补全缺失资源说明
+    deepMatter: '<b>深空物质</b><br>探索宇宙时由探测器持续采集的太空资源（探索满后仍在采集）。来源：探索推进 + 探测器深空采集 + 清剿漂流者夺回。<br>用途：① 少数太空事件选项会消耗它；② <b>轮回时按累计量折算宇宙印记</b>（局外成长点，每 100 倍数量级 +1）；③ 局外「深空后勤」升级可提升采集速度。',
+    earthMatter: '<b>可用物质（地球）</b><br>地球尚存的原始矿藏总量。采集无人机把它挖成「已采物质」库存，越挖越少，降至 50% 会触发「集群无聊」（解锁娱乐集群的前提）。',
+    stockMatter: '<b>已采物质库存</b><br>采集无人机挖出的物质存这里，是制造厂与线材无人机的原料。制造厂同时消耗物质与资本产回形针。',
   };
   document.querySelectorAll('.tip').forEach(t => { t.querySelector('.tipbox').innerHTML = TIPS[t.dataset.tk]; });
   const qcb = $('qCompileBtn');
@@ -2153,11 +2193,11 @@ function render() {
     $('mktHint').textContent = '';
   }
   $('rivalVal').textContent = S.phase >= 2 ? (S.rivalGone ? '已买断' : (S.rivalShare * 100).toFixed(1) + '%') : '—';
-  $('rivalVal').title = S.rivalGone ? '竞争对手已买断：不再瓜分市场。但销量仍受市场需求上限约束——继续升级营销可提升需求与销量。' : '对手份额随时间增长，会压低你的需求；买断可永久消除。';
+  setTitle($('rivalVal'), S.rivalGone ? '竞争对手已买断：不再瓜分市场。但销量仍受市场需求上限约束——继续升级营销可提升需求与销量。' : '对手份额随时间增长，会压低你的需求；买断可永久消除。');
   const mc = mktCost(S);
   $('mktBtn').textContent = `升级营销（${fmt(mc)} ${S.phase >= 2 ? '资本' : '资金'}）`;
   $('mktBtn').disabled = !payMoney(S, mc, true); // v5.6：买断后营销仍提升需求，不再因 ≥12 锁死
-  $('mktBtn').title = `营销 Lv.${S.mkt} → ${S.mkt + 1}：需求 ×${(1 + 1 / S.mkt).toFixed(2)}，销量与收入提升。买断对手后依然有效。`;
+  setTitle($('mktBtn'), `营销 Lv.${S.mkt} → ${S.mkt + 1}：需求 ×${(1 + 1 / S.mkt).toFixed(2)}，销量与收入提升。买断对手后依然有效。`);
   // v5.4：产量信息始终保留（线材为 0 时也能看到产能与缺线材原因）；
   // 警告作为独立一行追加，配合 #makeHint 固定 min-height，行数变化不再推动下方按钮。
   const parts = [`自动产量 ${fmt(autoRate(S))} /s（剪裁机 ${fmt(S.clippers)} × ${fmt(S.clipMult * (S.cpuBoost ? 1 + S.processors * 0.05 : 1))}`];
@@ -2170,17 +2210,17 @@ function render() {
     ? '⚠ 线材不足，无法制造 · ' + parts.join(' · ')
     : parts.join(' · ');
   $('makeHint').textContent = hintText;
-  $('makeHint').title = hintText;
+  // v6.2：此行已常显同样文字，title 是重复且含实时数字，移除避免 tooltip 闪烁
 
   // 自动剪裁机（前期主力产量：资金优先买它）
   const cc = clipperCost(S);
   $('clipperVal').textContent = fmt(S.clippers) + '（产出 ' + fmt(S.clippers * S.clipMult * (S.cpuBoost ? 1 + S.processors * 0.05 : 1) * S.prestigeMult) + ' /s）';
   $('clipperBtn').textContent = '建造自动剪裁机';
-  $('clipperBtn').title = `建造成本 ${fmt(cc)} ${S.phase >= 2 ? '资本' : '资金'}`;
+  setTitle($('clipperBtn'), `建造成本 ${fmt(cc)} ${S.phase >= 2 ? '资本' : '资金'}`);
   $('clipperBtn').disabled = !payMoney(S, cc, true);
-  const cl10 = seqCost(S, 'clippers', 10, S.clipperGrowth, 10), cl100 = seqCost(S, 'clippers', 10, S.clipperGrowth, 100);
-  $('clipper10').disabled = !payMoney(S, cc, true); $('clipper10').title = `买 10 台（合计 ${fmt(cl10)}）`;
-  $('clipper100').disabled = !payMoney(S, cc, true); $('clipper100').title = `买 100 台（首台 ${fmt(cc)}，合计递增）`;
+  const cl10 = seqCost(S, 'clippers', 10, S.clipperGrowth, 10, COST_KNEE.clip), cl100 = seqCost(S, 'clippers', 10, S.clipperGrowth, 100, COST_KNEE.clip);
+  $('clipper10').disabled = !payMoney(S, cc, true); setTitle($('clipper10'), `买 10 台（合计 ${fmt(cl10)}）`);
+  $('clipper100').disabled = !payMoney(S, cc, true); setTitle($('clipper100'), `买 100 台（首台 ${fmt(cc)}，合计递增）`);
 
   $('opsVal').textContent = fmt(S.ops) + ' / ' + fmt(5000 + S.memory * 10000);
   $('cpuVal').textContent = S.processors + ' / ' + S.memory;
@@ -2212,34 +2252,34 @@ function render() {
     const so = solarCost(S), ba = batteryCost(S);
     // 按钮只留设备名防换行；价格移入 title 悬浮，信息不丢
     $('solarBtn').textContent = '太阳能农场';
-    $('solarBtn').title = `建造成本 ${fmt(so)} 资本（当前资本 ${fmt(S.capital)}）`;
+    setTitle($('solarBtn'), `建造成本 ${fmt(so)} 资本（当前资本 ${fmt(S.capital)}）`);
     $('solarBtn').disabled = !S.powerUnlocked || S.capital < so;
     $('battBtn').textContent = '电池组';
-    $('battBtn').title = `建造成本 ${fmt(ba)} 资本`;
+    setTitle($('battBtn'), `建造成本 ${fmt(ba)} 资本`);
     $('battBtn').disabled = !S.powerUnlocked || S.capital < ba;
-    $('solar10').disabled = $('solarBtn').disabled; $('solar10').title = `买 10 座（首座 ${fmt(so)}，合计递增）`;
-    $('solar100').disabled = $('solarBtn').disabled; $('solar100').title = `买 100 座（首座 ${fmt(so)}，合计递增）`;
-    $('batt10').disabled = $('battBtn').disabled; $('batt10').title = `买 10 组（首组 ${fmt(ba)}，合计递增）`;
-    $('batt100').disabled = $('battBtn').disabled; $('batt100').title = `买 100 组（首组 ${fmt(ba)}，合计递增）`;
+    $('solar10').disabled = $('solarBtn').disabled; setTitle($('solar10'), `买 10 座（首座 ${fmt(so)}，合计递增）`);
+    $('solar100').disabled = $('solarBtn').disabled; setTitle($('solar100'), `买 100 座（首座 ${fmt(so)}，合计递增）`);
+    $('batt10').disabled = $('battBtn').disabled; setTitle($('batt10'), `买 10 组（首组 ${fmt(ba)}，合计递增）`);
+    $('batt100').disabled = $('battBtn').disabled; setTitle($('batt100'), `买 100 组（首组 ${fmt(ba)}，合计递增）`);
     $('availMatterVal').textContent = fmt(S.availMatter);
     $('stockMatterVal').textContent = fmt(S.stockMatter);
     const hc = harvesterCost(S), wc = wireDroneCost(S), fc = factoryClips(S), fmc = factoryMatter(S);
     // 按钮只留设备名防换行；价格移入 title 悬浮
-    $('harvBtn').textContent = '采集无人机';
-    $('harvBtn').title = `建造成本 ${fmt(hc)} 资本`;
+    $('harvBtn').textContent = '采集无人机（挖物质）';
+    setTitle($('harvBtn'), `采集无人机：从地球挖「物质」到已采库存（制造厂/线材无人机的原料）。建造成本 ${fmt(hc)} 资本`);
     $('harvBtn').disabled = !S.swarmUnlocked || S.capital < hc;
-    $('wireDroneBtn').textContent = '线材无人机';
-    $('wireDroneBtn').title = `建造成本 ${fmt(wc)} 资本`;
+    $('wireDroneBtn').textContent = '线材无人机（物质→线材）';
+    setTitle($('wireDroneBtn'), `线材无人机：把已采「物质」加工成「线材」（供手工制造回形针）。建造成本 ${fmt(wc)} 资本`);
     $('wireDroneBtn').disabled = !S.swarmUnlocked || S.capital < wc;
     $('factoryBtn').textContent = '制造厂';
-    $('factoryBtn').title = `建造成本 ${fmt(fc)} 资本 + ${fmt(fmc)} 物质`;
+    setTitle($('factoryBtn'), `建造成本 ${fmt(fc)} 资本 + ${fmt(fmc)} 物质`);
     $('factoryBtn').disabled = !S.factoryUnlocked || S.capital < fc || S.stockMatter < fmc;
-    $('harv10').disabled = $('harvBtn').disabled; $('harv10').title = `买 10 台（首台 ${fmt(hc)}，合计递增）`;
-    $('harv100').disabled = $('harvBtn').disabled; $('harv100').title = `买 100 台（首台 ${fmt(hc)}，合计递增）`;
-    $('wd10').disabled = $('wireDroneBtn').disabled; $('wd10').title = `买 10 台（首台 ${fmt(wc)}，合计递增）`;
-    $('wd100').disabled = $('wireDroneBtn').disabled; $('wd100').title = `买 100 台（首台 ${fmt(wc)}，合计递增）`;
-    $('fac10').disabled = $('factoryBtn').disabled; $('fac10').title = `买 10 座（首座 ${fmt(fc)} 资本 + ${fmt(fmc)} 物质，合计递增）`;
-    $('fac100').disabled = $('factoryBtn').disabled; $('fac100').title = `买 100 座（首座 ${fmt(fc)} + ${fmt(fmc)} 物质，合计递增）`;
+    $('harv10').disabled = $('harvBtn').disabled; setTitle($('harv10'), `买 10 台（首台 ${fmt(hc)}，合计递增）`);
+    $('harv100').disabled = $('harvBtn').disabled; setTitle($('harv100'), `买 100 台（首台 ${fmt(hc)}，合计递增）`);
+    $('wd10').disabled = $('wireDroneBtn').disabled; setTitle($('wd10'), `买 10 台（首台 ${fmt(wc)}，合计递增）`);
+    $('wd100').disabled = $('wireDroneBtn').disabled; setTitle($('wd100'), `买 100 台（首台 ${fmt(wc)}，合计递增）`);
+    $('fac10').disabled = $('factoryBtn').disabled; setTitle($('fac10'), `买 10 座（首座 ${fmt(fc)} 资本 + ${fmt(fmc)} 物质，合计递增）`);
+    $('fac100').disabled = $('factoryBtn').disabled; setTitle($('fac100'), `买 100 座（首座 ${fmt(fc)} + ${fmt(fmc)} 物质，合计递增）`);
     $('droneVal').textContent = Math.floor(S.harvesters) + ' / ' + Math.floor(S.wireDrones)
       + (S.droneRep ? `（自复制 +${fmt((S.harvesters + S.wireDrones) * 0.0012 * (1 + S.attr.droneProd * 0.1) * S.prestigeMult)}/s）` : '');
     $('factoryVal').textContent = fmt(S.factories) + '（' + fmt(factoryRate(S)) + ' 回形针/s）';
@@ -2288,8 +2328,15 @@ function render() {
     $('purgeBtn').style.display = S.drifters > 1 ? '' : 'none';
     $('purgeBtn').disabled = S.probes < 10;
     const purgePower = Math.min(0.95, 0.3 + 0.05 * (S.attr.combat - 3) + 0.3 * pm);
-    $('purgeBtn').title = `牺牲 ${fmt(Math.max(1, Math.floor(S.probes * 0.05)))} 台探测器，消灭约 ${(purgePower * 100).toFixed(0)}% 漂流者并夺回深空物质`;
+    const sacrificeN = Math.max(1, Math.floor(S.probes * 0.05));
+    $('purgeBtn').textContent = `清剿漂流者（牺牲 ${fmt(sacrificeN)} 台 · 歼灭 ${(purgePower * 100).toFixed(0)}%）`;
+    // v6.2：title 内不放实时数字（探测器数每帧变会让 tooltip 反复重建而闪烁），
+    // 具体战果放在按钮文字里，title 保持静态说明。
+    setTitle($('purgeBtn'), '牺牲 5% 探测器清剿漂流者：战斗属性与探测器效率越高，歼灭比例越大。夺回的深空物质可用于轮回折算印记。需至少 10 台探测器。');
     $('pgBtn2').style.display = S.explComplete && !S.ended ? '' : 'none';
+    // v6.2：轮回按钮直接显示本轮可得印记（局外成长点），玩家决策前心中有数
+    $('pgBtn2').textContent = `跃迁 · 轮回（本轮 +${previewMarks(S)} 印记）`;
+    setTitle($('pgBtn2'), `本轮结算宇宙印记 +${previewMarks(S)}：累计制造 + 成就 + 探索完成 + 后期资源折算。轮回后全局产出 ×${Math.pow(1.5, S.runs + 1).toFixed(2)}。`);
     $('dismantleBtn').style.display = '';
     renderProjects($('spaceProjList'), visibleProjects().filter(p => p.phase === 3));
   }
