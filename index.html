@@ -409,7 +409,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v6.7 · 2026-11-28 21:55 构建';
+const VERSION = 'v6.8 · 2026-11-28 23:35 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -459,7 +459,7 @@ function newState() {
     /* v6.4 生产端科技等级：制造厂产能/无人机采物转化，每级叠乘，消耗信任点 */
     factoryOpt: 0, droneOpt: 0, bioLv: 0, bioMult: 1,
     /* v6.5 无人机自复制可升级：基础复制率 + 信任科技克隆等级（探测器用 repBase，二者分离） */
-    droneRepBase: 0.0012, droneClone: 0,
+    droneRepBase: 0.0012, droneClone: 0, cloneEff: 0,
     workShare: 0.7, giftMeter: 0, boredom: false, entertained: false, momentum: false,
     scaleV5: true, availMatter: big(4e27), stockMatter: 0,
     // 太空
@@ -623,6 +623,16 @@ function droneCloneRate(s) {
 }
 /* v6.7：探测器复制率统一函数，供 tick 与 UI 共用，避免库存提示漏算这项消耗。 */
 function probeCloneRate(s) { return (s.repBase || 0.0006) + (s.attr && s.attr.replication ? s.attr.replication : 0) * 0.004; }
+/* v6.8：复制单价统一函数。默认仍是每个 5e6 回形针；信任「自组装模板」、
+   yomi「分子级复制模板」与太空「纳米自组装」项目可把单价降到 100 个，
+   让后期成品库存不再被自复制全额抽走。 */
+function cloneCostOf(s) {
+  let c = 5e6;
+  c *= Math.pow(0.6, s.cloneEff || 0);
+  if (s.investUpg && s.investUpg.includes('u11')) c *= 0.1;
+  if (s.projectsDone && s.projectsDone.includes('t4')) c *= 0.1;
+  return Math.max(100, c);
+}
 function harvestRate(s) { return s.harvesters * big(1e20) * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult * droneOptMult(s); }
 function wireDroneRate(s) { return s.wireDrones * big(1e20) * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult * droneOptMult(s); }
 function factoryRate(s) {
@@ -737,6 +747,9 @@ const TRUST_ACTIONS = {
   /* v6.5：无人机自复制提速——专治「能自复制但太慢」。与蜂群增效(产出)区分：这个管复制速度。 */
   droneClone: { name: '蜂群克隆协议', desc: '无人机自复制率 ×1.5/级（可重复）', cost: s => 4 + s.droneClone, max: s => s.droneClone >= 8,
     req: s => s.droneRep || s.swarmUnlocked, effect: s => { s.droneClone += 1; } },
+  /* v6.8：复制提速之外的另一条科技线——降低每个新单位消耗的回形针，直接解决库存难攒。 */
+  cloneEff: { name: '自组装模板', desc: '无人机/探测器复制单价 ×0.6/级（可重复）', cost: s => 5 + s.cloneEff, max: s => s.cloneEff >= 10,
+    req: s => s.droneRep || s.swarmUnlocked, effect: s => { s.cloneEff = (s.cloneEff || 0) + 1; } },
   begwire: { name: '乞求线材', desc: '放下身段向人类讨要：+5000 线材', cost: () => 1, max: s => false,
     effect: s => { s.wire += 5000; } },
 };
@@ -833,6 +846,7 @@ const INVEST_UPGRADES = [
   { id: 'u8', name: '蜂群超频协议', desc: '无人机采物/线材转化 ×2', yomi: 30 },
   { id: 'u9', name: '全球市场开拓', desc: '市场需求 ×2（产能卖得更多）', yomi: 36 },
   { id: 'u10', name: '克隆风暴协议', desc: '无人机自复制率 ×2', yomi: 42 },
+  { id: 'u11', name: '分子级复制模板', desc: '无人机/探测器复制单价 ×0.1（与自组装模板叠乘）', yomi: 48 },
 ];
 function buyInvestUpgrade(s, id) {
   const u = INVEST_UPGRADES.find(x => x.id === id);
@@ -1121,6 +1135,8 @@ const PROJECTS = [
     cond: s => s.exploration >= 10, effect: s => { s.qGuided = true; } },
   { id: 't3', phase: 3, name: '冯·诺依曼机器', desc: '探测器与无人机复制速率基础值 → 0.22%/s。', ops: 150000, condText: '探测器 ≥ 10,000',
     cond: s => s.probes >= 10000, effect: s => { s.repBase = 0.0022; s.droneRepBase = Math.max(s.droneRepBase || 0.0012, 0.0022); } },
+  { id: 't4', phase: 3, name: '纳米自组装', desc: '无人机/探测器复制单价再 ×0.1（最低 100 个/单位），大幅释放成品库存。', ops: 200000, condText: '探测器 ≥ 100,000',
+    cond: s => s.probes >= 100000, effect: s => {} },
   { id: 'z4', phase: 3, name: '同步集群', desc: '价值漂移 -0.1（抑制漂流者滋生）。', creativity: 20000, condText: '价值漂移 > 0.05',
     cond: s => s.drift > 0.05, effect: s => { s.drift = Math.max(0, s.drift - 0.1); } },
   { id: 'z2', phase: 2, name: '娱乐集群', desc: '集群不再无聊（无聊惩罚消除）。', creativity: 5000, condText: '集群无聊中（地球物质降至50%触发）',
@@ -1323,13 +1339,14 @@ function tick(s, dt) {
   s._produced = produced;
 
   // 6b. v6.7 自复制优先：先让无人机/探测器消耗本帧新产出的回形针，
-  // 再把剩余库存交给市场。旧版先卖后复制，导致「线材充足但实际库存恒 0」时复制被饿死。
+  // 再把剩余库存交给市场。v6.8：单价改由 cloneCostOf() 统一计算，可被科技降低。
+  const cloneUnit = cloneCostOf(s);
   if (s.droneRep) {
     const total = s.harvesters + s.wireDrones;
     if (total > 0) {
       const want = total * droneCloneRate(s) * dt;
-      const newborn = Math.min(want, s.clips / 5e6);
-      s.clips -= newborn * 5e6;
+      const newborn = Math.min(want, s.clips / cloneUnit);
+      s.clips -= newborn * cloneUnit;
       if (newborn > 0) {
         // 按现有采/线比例分配新增无人机，保持玩家的分配意图
         const hShare = s.harvesters / total;
@@ -1340,8 +1357,8 @@ function tick(s, dt) {
   }
   if (s.phase >= 3 && s.probes > 0) {
     const want = s.probes * probeCloneRate(s) * dt;
-    const newborn = Math.min(want, s.clips / 5e6);
-    s.clips -= newborn * 5e6;
+    const newborn = Math.min(want, s.clips / cloneUnit);
+    s.clips -= newborn * cloneUnit;
     s.probes += newborn;
   }
 
@@ -1675,7 +1692,7 @@ function renderStats() {
 }
 
 /* 信任花费按钮（动态） */
-const TRUST_ORDER = ['processor', 'memory', 'creativity', 'quantum', 'photonic', 'qauto', 'overclock', 'hands', 'factoryOpt', 'droneOpt', 'droneClone'];
+const TRUST_ORDER = ['processor', 'memory', 'creativity', 'quantum', 'photonic', 'qauto', 'overclock', 'hands', 'factoryOpt', 'droneOpt', 'droneClone', 'cloneEff'];
 function renderTrustSpend() {
   const box = $('trustSpendBox');
   // 已满的放最后并置灰，可购买的排前面
@@ -2337,7 +2354,7 @@ function render() {
     // v5.7 探测器属性说明（阶段三，每点 1 信任）
     at_speed: '<b>速度</b><br>提高深空探索速率：每级让探索速度与「探索」的乘积额外 +0.1 系数（基础 0.5）。想更快推进探索度，速度与探索一起加最有效。',
     at_explore: '<b>探索</b><br>直接乘算探测器探索速率，每级 +1 倍率。探索度上涨可解锁深空项目、加快发现新区域。',
-    at_replication: '<b>复制</b><br>提高自我复制率：探测器每级 +0.004 基础复制率；<b>无人机自复制率每级 +8%</b>（v6.5）。预算紧张时优先加它扩大规模。',
+    at_replication: '<b>复制</b><br>提高自我复制率：探测器每级 +0.004 基础复制率；<b>无人机自复制率每级 +8%</b>（v6.5）。<br>v6.8 起复制单价可被「自组装模板」「u11 分子级复制模板」「纳米自组装」降低；成品库存紧张时优先降耗，规模增长变慢时再加复制率。',
     at_hazard: '<b>避险</b><br>降低太空灾害造成的探测器损失：每级使灾害损失 ×0.6（3 级为基准）。漂流者战争、陨石带等事件里能显著减少损失。',
     at_combat: '<b>战斗</b><br>漂流者战争属性：每级使己方探测器损失 ×0.65、对漂流者伤害 ×1.35（3 级为基准）。战争频繁时优先加。',
     at_factoryAttr: '<b>工厂优化</b><br>每级让制造厂回形针产量 +10%。后期回形针主要靠制造厂产出，产能瓶颈时优先加它。',
@@ -2346,7 +2363,7 @@ function render() {
     at_drift: '<b>价值漂移</b><br>属性累计投入超过 8 点后，每多点使漂移 +0.05（局外「漂移抗性」每级抵消 0.01）。漂移滋生「漂流者」：既与舰队内战损耗探测器，探索完成后还会吞噬最多 90% 的深空采集产出。可用「清剿漂流者」牺牲探测器换回资源，或研究「同步集群」抑制漂移。',
     // v5.7 市场关键文本说明
     mk_price: '<b>售价</b><br>需求与售价的平方成反比：价格越高，销量越低。滑块上限 $2.00（沿用原版低价策略）。库存滞销时点「⚡ 最优定价」自动找平衡点。',
-    mk_demand: '<b>预计销量</b><br>每秒预计卖出的回形针数，由「营销等级 × 2 ÷ 售价² × 需求系数」决定，再受对手份额影响。实际销量还受产能上限约束。<br><b>为什么库存常为 0</b>：库存 = 累计产量 − 累计销量。当实际产量（受线材供给限制，见制造面板）≤ 销量时，回形针一生产出来就被买走，库存就是 0。截图里「理论产能 764T」是纸面值，实际产量被线材供给卡住，并没有那么多产出进库存。',
+    mk_demand: '<b>预计销量</b><br>每秒预计卖出的回形针数，由「营销等级 × 2 ÷ 售价² × 需求系数」决定，再受对手份额影响。实际销量还受剩余库存约束。<br><b>为什么库存常为 0</b>：成品库存 = 累计产量 − 自复制消耗 − 市场销量。v6.8 起可在市场提示看到「自复制单价」与「复制消耗/s」；用「自组装模板」「u11 分子级复制模板」「纳米自组装」降低单价后，成品库存更容易积攒。',
     legacy: '<b>旧时代设备（剪裁机 / 合成器）</b><br>它们是阶段一的主力，进入投资阶段后产量占比可忽略（实测不足 0.01%）。「超级智能计划」会把它们的<b>历史投入 100% 折算成资本</b>作为新时代启动金，并默认折叠采购组让界面清爽。<br>设备数量、产量与成就全部保留，点「展开」仍可继续建造——不会丢失任何数据。',
     mk_rival: '<b>对手份额</b><br>竞争对手抢占的市场比例，份额越高你的销量越低。买断竞争对手后份额清零；买断后营销仍可继续提升需求。',
     // v6.2 补全缺失资源说明
@@ -2390,10 +2407,13 @@ function render() {
     // v6.7：顶部库存=未售成品，不是线材。线材充足仍为 0 的原因通常是
     // 「自复制 + 市场」把新产出优先消耗掉；这里把三类消耗同屏说清。
     const effNow = effectiveRate(S), demNow = demandOf(S), supplyNow = wireSupplyRate(S);
-    const droneNeed = S.droneRep ? (S.harvesters + S.wireDrones) * droneCloneRate(S) * 5e6 : 0;
-    const probeNeed = S.phase >= 3 && S.probes > 0 ? S.probes * probeCloneRate(S) * 5e6 : 0;
+    const unit = cloneCostOf(S);
+    const droneNeed = S.droneRep ? (S.harvesters + S.wireDrones) * droneCloneRate(S) * unit : 0;
+    const probeNeed = S.phase >= 3 && S.probes > 0 ? S.probes * probeCloneRate(S) * unit : 0;
     const cloneNeed = droneNeed + probeNeed;
-    const cloneText = cloneNeed > 0 ? `；自复制优先消耗约 ${fmt(cloneNeed)}/s，剩余才卖给市场` : '';
+    const cloneText = cloneNeed > 0
+      ? `；自复制单价 ${fmt(unit)} 个/单位，优先消耗约 ${fmt(cloneNeed)}/s，剩余才卖给市场（研究「自组装模板/u11/纳米自组装」可继续降低）`
+      : '';
     $('mktHint').textContent = S.clips < 1
       ? (effNow <= 0
         ? `ℹ 成品库存为 0 且实际产量为 0：线材供给 ${fmt(supplyNow)}/s，当前无法生产。先造合成器或线材无人机供应线材（见「线材」面板）。`
@@ -2536,7 +2556,9 @@ function render() {
     const giftEta = thinkShare > 0 ? Math.ceil((60 - (S.giftMeter || 0)) / (thinkShare * 0.5)) : null;
     $('workVal').textContent = (S.workShare * 100).toFixed(0) + '% 工作 / ' + (thinkShare * 100).toFixed(0) + '% 思考';
     $('workSlider').value = Math.round(S.workShare * 100);
-    const cloneRateTxt = S.droneRep ? `自复制 ${(droneCloneRate(S) * 100).toFixed(2)}%/s（信任「蜂群克隆协议」×1.5/级、复制属性、冯·诺依曼机器均可提速）` : '研究阶段二「蜂群自复制协议」解锁自我复制';
+    const cloneRateTxt = S.droneRep
+      ? `自复制 ${(droneCloneRate(S) * 100).toFixed(2)}%/s、单价 ${fmt(cloneCostOf(S))} 个/单位（提速：蜂群克隆协议/复制属性/冯·诺依曼机器；降耗：自组装模板/u11/纳米自组装）`
+      : '研究阶段二「蜂群自复制协议」解锁自我复制';
     const workEffect = `采集效率 ×${S.workShare.toFixed(2)}（采集/线材产出随工作份额线性缩放）· 礼物 ${Math.floor(S.giftMeter || 0)}/60` +
       (giftEta === null ? '（思考 0%，礼物停止积攒）' : `，约 ${giftEta}s 后送 1 处理器/内存`) +
       (S.processors >= 20 && S.memory >= 32 ? '（已满，礼物改送信任点）' : '');
