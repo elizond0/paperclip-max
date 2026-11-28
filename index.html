@@ -208,7 +208,7 @@
 
     <div class="panel" id="wirePanel">
       <h2>线材</h2>
-      <div class="row"><span class="k">库存</span><span class="v" id="wireVal">0</span></div>
+      <div class="row"><span class="k">线材库存</span><span class="v" id="wireVal">0</span></div>
       <div class="row"><span class="k">现价 / 千单位</span><span class="v" id="wirePriceVal"></span></div>
       <div class="btnrow">
         <button class="act" id="wireBtn">购买 ×1000</button>
@@ -409,7 +409,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v6.6 · 2026-11-28 18:50 构建';
+const VERSION = 'v6.7 · 2026-11-28 21:55 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -621,6 +621,8 @@ function droneCloneRate(s) {
   const attr = 1 + (s.attr && s.attr.replication ? s.attr.replication - 3 : 0) * 0.08;
   return base * clone * yomi * attr * (s.prestigeMult || 1);
 }
+/* v6.7：探测器复制率统一函数，供 tick 与 UI 共用，避免库存提示漏算这项消耗。 */
+function probeCloneRate(s) { return (s.repBase || 0.0006) + (s.attr && s.attr.replication ? s.attr.replication : 0) * 0.004; }
 function harvestRate(s) { return s.harvesters * big(1e20) * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult * droneOptMult(s); }
 function wireDroneRate(s) { return s.wireDrones * big(1e20) * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult * droneOptMult(s); }
 function factoryRate(s) {
@@ -674,7 +676,7 @@ function poweredRate(s) {
 function wireSupplyRate(s) { return synthWireRate(s) + wireDroneRate(s); }
 /* v6.6 实际产量：受线材供给约束的稳态产出。autoRate 是「理论产能」，
    实际每秒能产多少取决于线材供给（wireSupplyRate）。库存之所以恒为 0，
-   是因为实际产量 ≈ 线材供给 ≈ 销量，回形针一生产出来就被市场瞬间买走。 */
+   是因为实际产量 ≈ 线材供给 ≈ 销量；v6.7 起还要先满足自复制，剩余才进市场。 */
 function effectiveRate(s) {
   const paper = poweredRate(s);
   if (paper <= 0) return 0;
@@ -1306,23 +1308,8 @@ function tick(s, dt) {
     const wr = Math.min(wireDroneRate(s) * dt, s.stockMatter);
     s.stockMatter -= wr;
     s.wire += wr;
-    // v6.1 蜂群自复制：按现有机群规模指数增长，每台消耗 5e6 回形针（与探测器复制同价）。
-    // v6.5：复制率改为 droneCloneRate() 统一计算，可被科技/属性/yomi/阶段三项目升级，不再硬编码。
-    if (s.droneRep) {
-      const total = s.harvesters + s.wireDrones;
-      if (total > 0) {
-        const want = total * droneCloneRate(s) * dt;
-        const afford = s.clips / 5e6;
-        const newborn = Math.min(want, afford);
-        s.clips -= newborn * 5e6;
-        if (newborn > 0) {
-          // 按现有采/线比例分配新增无人机，保持玩家的分配意图
-          const hShare = s.harvesters / total;
-          s.harvesters += newborn * hShare;
-          s.wireDrones += newborn * (1 - hShare);
-        }
-      }
-    }
+    // v6.7：蜂群自复制已移到「生产之后、市场销售之前」执行，
+    // 否则市场会先把本帧新产出的回形针买走，导致复制永远吃不到库存。
   }
 
   // 6. 生产（吃线材；制造厂部分受供电率约束，剪裁机/超级机不受）
@@ -1334,6 +1321,29 @@ function tick(s, dt) {
   s.clips += produced;
   s.totalClips += produced;
   s._produced = produced;
+
+  // 6b. v6.7 自复制优先：先让无人机/探测器消耗本帧新产出的回形针，
+  // 再把剩余库存交给市场。旧版先卖后复制，导致「线材充足但实际库存恒 0」时复制被饿死。
+  if (s.droneRep) {
+    const total = s.harvesters + s.wireDrones;
+    if (total > 0) {
+      const want = total * droneCloneRate(s) * dt;
+      const newborn = Math.min(want, s.clips / 5e6);
+      s.clips -= newborn * 5e6;
+      if (newborn > 0) {
+        // 按现有采/线比例分配新增无人机，保持玩家的分配意图
+        const hShare = s.harvesters / total;
+        s.harvesters += newborn * hShare;
+        s.wireDrones += newborn * (1 - hShare);
+      }
+    }
+  }
+  if (s.phase >= 3 && s.probes > 0) {
+    const want = s.probes * probeCloneRate(s) * dt;
+    const newborn = Math.min(want, s.clips / 5e6);
+    s.clips -= newborn * 5e6;
+    s.probes += newborn;
+  }
 
   // 7. 销售
   const sold = Math.min(s.clips, demandOf(s) * dt);
@@ -1393,14 +1403,7 @@ function tick(s, dt) {
       s.spaceMatter += add;
       s.raidedMatter = (s.raidedMatter || 0) + add * raidPct;
     }
-    // 复制（消耗回形针库存）
-    if (s.probes > 0) {
-      const want = s.probes * (s.repBase + s.attr.replication * 0.004) * dt;
-      const afford = s.clips / 5e6;
-      const newborn = Math.min(want, afford);
-      s.clips -= newborn * 5e6;
-      s.probes += newborn;
-    }
+    // v6.7：探测器复制已与无人机复制一起前移到生产后、销售前执行。
     // 危险损失
     if (s.probes > 0) {
       const haz = s.probes * 1e-5 * (1 + s.exploration / 40) * Math.pow(0.6, s.attr.hazard - 3) * dt;
@@ -1659,16 +1662,16 @@ function toast(msg, ms) {
 }
 
 const STAT_DEFS = [
-  ['回形针总数', s => fmt(s.totalClips)],
-  ['库存', s => fmt(s.clips)],
-  ['资金', s => s.phase >= 2 ? '已并入资本' : fmt(s.funds)],
-  ['资本', s => s.phase >= 2 ? fmt(s.capital) : '—'],
-  ['信任', s => String(s.trust)],
-  ['阶段', s => ['', '制造', '投资', '太空'][s.phase] + (s.runs ? ' · 轮回' + s.runs : '')],
+  ['回形针总数', s => fmt(s.totalClips), '累计制造过的回形针，不会因卖出或复制消耗而减少。'],
+  ['成品库存', s => fmt(s.clips), '顶部库存是未售出的回形针，不是线材库存。线材请看左侧「线材」面板；回形针会先供自复制，再卖给市场。'],
+  ['资金', s => s.phase >= 2 ? '已并入资本' : fmt(s.funds), '阶段一货币；进入投资阶段后并入资本。'],
+  ['资本', s => s.phase >= 2 ? fmt(s.capital) : '—', '阶段二起的主货币，来源包括销售回形针和投资。'],
+  ['信任', s => String(s.trust), '用于购买信任科技，里程碑与轮回都会产出。'],
+  ['阶段', s => ['', '制造', '投资', '太空'][s.phase] + (s.runs ? ' · 轮回' + s.runs : ''), '当前游戏阶段与轮回次数。'],
 ];
 function renderStats() {
-  setHTML($('statsBar'), STAT_DEFS.map(([k, f]) =>
-    `<span class="st">${k}<b>${f(S)}</b></span>`).join(''));
+  setHTML($('statsBar'), STAT_DEFS.map(([k, f, tip]) =>
+    `<span class="st"${tip ? ` title="${tip}"` : ''}>${k}<b>${f(S)}</b></span>`).join(''));
 }
 
 /* 信任花费按钮（动态） */
@@ -2384,13 +2387,17 @@ function render() {
       ? `⚠ 售价已最低，需求 ${fmt(dem)}/s 仍远低于产能 ${fmt(prodNow)}/s：销量被「市场需求上限」卡住，升级营销或买断对手可提升需求。`
       : `⚠ 需求 ${fmt(dem)}/s 低于产能 ${fmt(prodNow)}/s：点「⚡ 最优定价」降价到 ${fmt(Math.max(0.01, bestPriceOf(S)))} 可卖出更多。`;
   } else {
-    // v6.6：常显库存流转说明，回答「产量这么高，库存为何是 0」——
-    // 实际产量受线材供给约束，且生产出来立刻被市场买走，故库存难堆积。
+    // v6.7：顶部库存=未售成品，不是线材。线材充足仍为 0 的原因通常是
+    // 「自复制 + 市场」把新产出优先消耗掉；这里把三类消耗同屏说清。
     const effNow = effectiveRate(S), demNow = demandOf(S), supplyNow = wireSupplyRate(S);
+    const droneNeed = S.droneRep ? (S.harvesters + S.wireDrones) * droneCloneRate(S) * 5e6 : 0;
+    const probeNeed = S.phase >= 3 && S.probes > 0 ? S.probes * probeCloneRate(S) * 5e6 : 0;
+    const cloneNeed = droneNeed + probeNeed;
+    const cloneText = cloneNeed > 0 ? `；自复制优先消耗约 ${fmt(cloneNeed)}/s，剩余才卖给市场` : '';
     $('mktHint').textContent = S.clips < 1
       ? (effNow <= 0
-        ? `ℹ 库存为 0 且实际产量为 0：线材供给 ${fmt(supplyNow)}/s，当前无法生产。先造合成器或线材无人机供应线材（见「线材」面板）。`
-        : `ℹ 库存为 0：当前实际产量 ${fmt(effNow)}/s（受线材供给限制），市场销量 ${fmt(demNow)}/s，回形针一产出即被买走。想囤库存需让产量超过销量（升线材供给/降售价）。`)
+        ? `ℹ 成品库存为 0 且实际产量为 0：线材供给 ${fmt(supplyNow)}/s，当前无法生产。先造合成器或线材无人机供应线材（见「线材」面板）。`
+        : `ℹ 成品库存为 0：实际产量 ${fmt(effNow)}/s、市场销量 ${fmt(demNow)}/s${cloneText}。线材库存不是成品库存；想囤成品需让产量 > 销量 + 自复制消耗（升线材供给、提高售价或降低营销）。`)
       : '';
   }
   $('rivalVal').textContent = S.phase >= 2 ? (S.rivalGone ? '已买断' : (S.rivalShare * 100).toFixed(1) + '%') : '—';
@@ -2422,8 +2429,8 @@ function render() {
   // v6.6 核心：显示受线材约束的「实际产量」，并与理论产能对比，解释库存为何为 0
   const eff = effectiveRate(S), paper = poweredRate(S), supply = wireSupplyRate(S);
   const effLine = supply + 1 < paper
-    ? `实际产量 ${fmt(eff)} /s（线材供给仅 ${fmt(supply)} /s，产能受限；产出随即被市场买走，故库存常为 0）`
-    : `实际产量 ${fmt(eff)} /s（线材充足）`;
+    ? `实际产量 ${fmt(eff)} /s（线材供给仅 ${fmt(supply)} /s，产能受限；产出先供自复制、剩余卖给市场，故成品库存常为 0）`
+    : `实际产量 ${fmt(eff)} /s（线材充足；成品库存仍取决于自复制与市场的消耗）`;
   const hintText = (S.wire < 1 ? '⚠ 线材库存为 0，无法制造 · ' : '') + effLine + ' · ' + parts.join(' · ');
   $('makeHint').textContent = hintText;
   // v6.2：此行已常显同样文字，title 是重复且含实时数字，移除避免 tooltip 闪烁
