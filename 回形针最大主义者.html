@@ -309,6 +309,7 @@
         </div>
         <div class="row" style="margin-top:8px;"><span class="k">可用物质（地球）<span class="tip" data-tk="earthMatter">?<span class="tipbox"></span></span></span><span class="v" id="availMatterVal"></span></div>
         <div class="row"><span class="k">已采物质库存<span class="tip" data-tk="stockMatter">?<span class="tipbox"></span></span></span><span class="v" id="stockMatterVal"></span></div>
+        <div class="hint" id="matterRecycleHint"></div>
         <div class="devgrp">
           <div class="devline">
             <button class="act" id="harvBtn">采集无人机</button>
@@ -395,7 +396,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v6.3 · 2026-11-28 17:45 构建';
+const VERSION = 'v6.4 · 2026-11-28 18:10 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -441,6 +442,8 @@ function newState() {
     solarFarms: 0, solarCostN: 0, batteries: 0, battCostN: 0, battCapMult: 1,
     mwStored: 0, mwBanked: 0,
     harvesters: 0, harvCostN: 0, wireDrones: 0, wdCostN: 0, factories: 0, facCostN: 0,
+    /* v6.4 生产端科技等级：制造厂产能/无人机采物转化，每级叠乘，消耗信任点 */
+    factoryOpt: 0, droneOpt: 0, bioLv: 0, bioMult: 1,
     workShare: 0.7, giftMeter: 0, boredom: false, entertained: false, momentum: false,
     scaleV5: true, availMatter: big(4e27), stockMatter: 0,
     // 太空
@@ -471,7 +474,12 @@ function pushLog(s, msg, kind) {
 /* ---- 信任里程碑（按累计回形针授予） ---- */
 const TRUST_MARKS = [
   1e3, 5e3, 2e4, 5e4, 1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 5e8, 1e9, 5e9, 1e10, 5e10,
-  1e11, 5e11, 1e12, 5e12, 1e13, 1e15, 1e17, 1e19, 1e21, 1e23, 1e25, 1e27,
+  1e11, 5e11, 1e12, 5e12, 1e13,
+  /* v6.4：产能上限打开后信任点被基建（处理器24+内存40）吃光，阶段三属性分配(a25 需20点)
+     与生产科技争抢点数。原里程碑 1e13→1e15 跨度太大，补 2e13~8e14 中档（通关实际产量区间），
+     让正常通关就能多拿 ~15 点信任，属性与生产科技都有供给。 */
+  6e12, 2e13, 5e13, 1e14, 2e14, 5e14, 8e14,
+  1e15, 1e17, 1e19, 1e21, 1e23, 1e25, 1e27, 1e29, 1e31, 1e33,
 ];
 function trustMarkGain(v) { return v >= 1e9 ? 3 : v >= 1e6 ? 2 : 1; }
 
@@ -492,6 +500,7 @@ function bestPriceOf(s) {
 }
 function demandOf(s) {
   let d = s.mkt * 2 / (s.price * s.price) * s.demandMult;
+  if (s.investUpg && s.investUpg.includes('u9')) d *= 2; // v6.4 全球市场开拓：市场需求 ×2
   if (s.phase >= 2 && !s.rivalGone) d *= (1 - s.rivalShare);
   return d;
 }
@@ -524,7 +533,10 @@ function softHistCost(base, growth, n, knee) {
 /* v6.3：拐点下调到正常通关购买量的一半左右，让软上限真正介入「购买困难区」。
    实测通关买 67 台无人机/37 座制造厂，原拐点 70/40 几乎没用上，玩家仍在指数段挣扎。
    新拐点 harv/wd=35、fac=20：第 35 台后每级仅 +8%，后期采购成本大幅下降。 */
-const COST_KNEE = { clip: 80, mkt: 10, synth: 30, mega: 40, solar: 10, batt: 8, harv: 35, wd: 35, fac: 20, probe: 100 };
+/* v6.4：生产端拐点再前移——v6.3 实测通关仅买到 20 台无人机/17 座制造厂（远未触及 35/20 拐点），
+   软上限根本没介入，玩家全程在 1.08ⁿ 指数段挣扎。前移到 harv/wd=24、fac=14，让第 24/14 台后
+   转为 +8% 线性，真正覆盖「正常通关购买量」。clip/mkt/mega/solar/batt/probe 维持不变。 */
+const COST_KNEE = { clip: 80, mkt: 10, synth: 30, mega: 40, solar: 10, batt: 8, harv: 24, wd: 24, fac: 14, probe: 100 };
 function clipperCost(s) { return softCost(10, s.clipperGrowth, s.clippers, COST_KNEE.clip); }
 function mktCost(s) { return softCost(100, 1.8, s.mkt - 1, COST_KNEE.mkt); }
 function synthCost(s) { return softCost(5000, 1.25, s.synthCostN, COST_KNEE.synth); }
@@ -536,11 +548,14 @@ function batteryCost(s) { return softCost(2e7, 1.5, s.battCostN, COST_KNEE.batt)
 /* v5.8：原 1.12 指数增长叠加 CAP_DAMP=1e10 后资本转线性增长，第 60 台起攒钱时间指数拉长
    （第 100 台需约 18.6 小时），玩家普遍反馈「越到后期越买不起」。降到与制造厂相同的 1.08，
    数值体系统一；不动 CAP_DAMP 以保留 v5.0 的防 Infinity 设计。 */
-function harvesterCost(s) { return softCost(1e9, 1.08, s.harvCostN, COST_KNEE.harv); }
-function wireDroneCost(s) { return softCost(1e9, 1.08, s.wdCostN, COST_KNEE.wd); }
-function factoryClips(s) { return softCost(1e9, 1.08, s.facCostN, COST_KNEE.fac); }
-/* 制造厂物质成本 1.03 也设拐点，避免海量制造厂时物质成本指数爆炸 */
-function factoryMatter(s) { return softCost(big(5e20), 1.03, s.facCostN, 200); }
+/* v6.4：采集/线材无人机/制造厂成本基数 1e9 → 5e8。诊断显示终局资本仅 7.31B 而第 20 台
+   无人机要 4.66B（占 64%），买一台就掏空家底。基数减半后第 20 台约 2.33B，配合拐点 24
+   的 +8% 线性段，中期能持续扩产而非被单台成本卡死。 */
+function harvesterCost(s) { return softCost(5e8, 1.08, s.harvCostN, COST_KNEE.harv); }
+function wireDroneCost(s) { return softCost(5e8, 1.08, s.wdCostN, COST_KNEE.wd); }
+function factoryClips(s) { return softCost(5e8, 1.08, s.facCostN, COST_KNEE.fac); }
+/* 制造厂物质成本 1.03 也设拐点，v6.4：200 → 120，避免海量制造厂时物质成本指数爆炸 */
+function factoryMatter(s) { return softCost(big(5e20), 1.03, s.facCostN, 120); }
 function probeCost(s) { return softCost(5e6, 1.13, Math.floor(s.probes), COST_KNEE.probe); }
 
 /* ---- 电力（阶段 ≥2，需解锁） ---- */
@@ -565,11 +580,15 @@ function droneEff(s) {
   if (s.boredom && !s.entertained) return 0.3;
   return 1;
 }
-function harvestRate(s) { return s.harvesters * big(1e20) * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult; }
-function wireDroneRate(s) { return s.wireDrones * big(1e20) * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult; }
+/* v6.4：生产端科技加成——无人机采物/转化每级 ×1.4、制造厂每级 ×1.5，消耗信任点购买。
+   与太空反哺（spaceProdMult）叠乘，给后期「产能上不去」提供持续成长出口。 */
+function droneOptMult(s) { return Math.pow(1.4, s.droneOpt || 0) * (s.investUpg && s.investUpg.includes('u8') ? 2 : 1); }
+function factoryOptMult(s) { return Math.pow(1.5, s.factoryOpt || 0) * (s.investUpg && s.investUpg.includes('u7') ? 2 : 1); }
+function harvestRate(s) { return s.harvesters * big(1e20) * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult * droneOptMult(s); }
+function wireDroneRate(s) { return s.wireDrones * big(1e20) * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult * droneOptMult(s); }
 function factoryRate(s) {
   if (!s.factoryUnlocked) return 0;
-  return s.factories * 1e10 * (1 + s.attr.factoryAttr * 0.1) * s.prestigeMult;
+  return s.factories * 1e10 * (1 + s.attr.factoryAttr * 0.1) * s.prestigeMult * factoryOptMult(s);
 }
 /* v6.3 太空反哺生产：探测器/qops/ops/深空物质在太空阶段按数量级折算成
    回形针产能倍率，解决「切太空对生产零收益、后期资源成了死数字」的问题。
@@ -586,9 +605,19 @@ function spaceProdBreakdown(s) {
   return { q, o, m, p, total: Math.min(2, q + o + m + p) };        // 加成部分封顶 +200%
 }
 function spaceProdMult(s) { return 1 + spaceProdBreakdown(s).total; }
+/* v6.4 物质永不断供：地球原始矿藏 availMatter 挖空后，太空阶段自动把「深空物质」按
+   采集无人机的同等效率转拨成已采物质库存，保证线材无人机/制造厂永不因原料枯竭停摆。
+   - 仅在 phase≥3 且 availMatter 见底时介入，前期平衡不变；
+   - 反哺速率 = harvestRate（和无太空矿时的地球开采同速），受深空物质存量约束；
+   - 这是「后期死资源（深空物质）→ 生产端」的第二条出口，与太空产能反哺互补。 */
+function matterRecycleRate(s) {
+  if (s.phase < 3 || s.availMatter > 0) return 0;
+  return harvestRate(s); // 与地球开采同速，无缝接替
+}
 function autoRate(s) {
   const clipBoost = s.cpuBoost ? 1 + s.processors * 0.05 : 1; // 运算增效：处理器直接增益主线产出
-  const base = s.clippers * s.clipMult * clipBoost * s.prestigeMult + s.megas * 2000 * s.megaMult + factoryRate(s);
+  const bio = s.bioMult || 1; // v6.4 合成生物学：创造力的产能出口
+  const base = (s.clippers * s.clipMult * clipBoost * s.prestigeMult + s.megas * 2000 * s.megaMult + factoryRate(s)) * bio;
   return base * spaceProdMult(s);
 }
 function synthWireRate(s) { return s.synths * 200; }
@@ -620,22 +649,29 @@ function runQCompile(s) {
 
 /* ---- 信任花费 ---- */
 const TRUST_ACTIONS = {
-  processor: { name: '建造处理器', desc: '+1 处理器（操作点产出 ×cpuMult）', cost: () => 1, max: s => s.processors >= 12,
+  /* v6.4：运算基建上限全面提升——原 12/20 太快买满，后期 ops/创造力溢出无处可花。
+     处理器 12→24、内存 20→40，让量子编译/锦标赛/研究消耗有更长成长曲线。 */
+  processor: { name: '建造处理器', desc: '+1 处理器（操作点产出 ×cpuMult）', cost: () => 1, max: s => s.processors >= 20,
     effect: s => { s.processors += 1; } },
-  memory: { name: '扩建内存', desc: '+1 内存槽（操作点上限 +10000）', cost: () => 1, max: s => s.memory >= 20,
+  memory: { name: '扩建内存', desc: '+1 内存槽（操作点上限 +10000）', cost: () => 1, max: s => s.memory >= 32,
     effect: s => { s.memory += 1; } },
   creativity: { name: '创造力协议', desc: '操作点满仓时溢出转为创造力', cost: () => 2, max: s => s.creativityOn,
     req: s => s.processors >= 1, effect: s => { s.creativityOn = true; } },
   quantum: { name: '量子计算', desc: '解锁量子操作点网格（点击获得 qops）', cost: () => 3, max: s => s.quantumOn,
     req: s => s.creativityOn, effect: s => { s.quantumOn = true; initQGrid(s); } },
-  photonic: { name: '光子芯片', desc: 'qops 被动产出 +5/s（可重复）', cost: () => 2, max: s => s.photonic >= 2,
+  photonic: { name: '光子芯片', desc: 'qops 被动产出 +5/s（可重复）', cost: () => 2, max: s => s.photonic >= 8,
     req: s => s.quantumOn, effect: s => { s.photonic += 1; } },
   qauto: { name: '量子自动化', desc: '↑ 态方块自动收取，重排时自动结算（免手点）', cost: () => 3, max: s => s.qauto,
     req: s => s.quantumOn, effect: s => { s.qauto = true; } },
-  overclock: { name: '超频剪裁机', desc: '剪裁机产出 ×2', cost: s => 1 + s.overclock, max: s => s.overclock >= 3,
+  overclock: { name: '超频剪裁机', desc: '剪裁机产出 ×2', cost: s => 1 + s.overclock, max: s => s.overclock >= 6,
     effect: s => { s.overclock += 1; s.clipMult *= 2; } },
-  hands: { name: '手部强化', desc: '暴击率 +3%', cost: s => Math.round(2 * Math.pow(1.5, s.hands)), max: s => s.hands >= 3,
+  hands: { name: '手部强化', desc: '暴击率 +3%', cost: s => Math.round(2 * Math.pow(1.5, s.hands)), max: s => s.hands >= 6,
     effect: s => { s.hands += 1; s.critChance += 0.03; } },
+  /* v6.4 新增生产端科技：让堆积的信任点能直接提升产能，专治后期「生产端上不去」 */
+  factoryOpt: { name: '制造厂精调', desc: '制造厂产能 ×1.5/级（可重复）', cost: s => 3 + s.factoryOpt, max: s => s.factoryOpt >= 8,
+    req: s => s.factoryUnlocked, effect: s => { s.factoryOpt += 1; } },
+  droneOpt: { name: '蜂群增效', desc: '无人机采物/线材转化 ×1.4/级（可重复）', cost: s => 3 + s.droneOpt, max: s => s.droneOpt >= 8,
+    req: s => s.swarmUnlocked, effect: s => { s.droneOpt += 1; } },
   begwire: { name: '乞求线材', desc: '放下身段向人类讨要：+5000 线材', cost: () => 1, max: s => false,
     effect: s => { s.wire += 5000; } },
 };
@@ -718,6 +754,11 @@ const INVEST_UPGRADES = [
   { id: 'u4', name: '半导体路线图', desc: '超级剪裁机价格增速 1.45 → 1.32', yomi: 12 },
   { id: 'u5', name: '深度策略库', desc: '锦标赛读心点产出 +2', yomi: 15 },
   { id: 'u6', name: '恶意并购部', desc: '反垄断收购费用减半', yomi: 18 },
+  /* v6.4 新增生产端科技：消耗后期过剩的 yomi，直接放大产能与市场需求，
+     打通「营销上去销量多但产能跟不上」的死结（u9 让市场能吃下更多产能）。 */
+  { id: 'u7', name: '精密制造协议', desc: '制造厂产能 ×2', yomi: 24 },
+  { id: 'u8', name: '蜂群超频协议', desc: '无人机采物/线材转化 ×2', yomi: 30 },
+  { id: 'u9', name: '全球市场开拓', desc: '市场需求 ×2（产能卖得更多）', yomi: 36 },
 ];
 function buyInvestUpgrade(s, id) {
   const u = INVEST_UPGRADES.find(x => x.id === id);
@@ -990,6 +1031,11 @@ const PROJECTS = [
     effect: s => { s.battCapMult = 2; } },
   { id: 's5', phase: 2, name: '太空探索计划', desc: '研究消耗 120k 操作点、电池组累计 1000 万 MWs、100 万亿回形针。解锁太空阶段。', ops: 120000, clips: 1e14, condText: '电池组累计充入 1,000 万 MWs', pin: true,
     cond: s => s.mwBanked >= 1e7, effect: s => { s.phase = 3; } },
+  /* v6.4：创造力的生产端出口——后期创造力大量溢出（诊断剩 122K 无处可花），
+     做成可重复项目：每级消耗递增的创造力，全局产能 ×1.3，成本按 1.6ⁿ 递增。 */
+  { id: 'bio', phase: 2, name: '合成生物学', desc: '把创造力注入生产线：全局产能 ×1.3（可重复）。', repeatable: true, countKey: 'bioLv',
+    creativity: s => Math.round(5000 * Math.pow(1.6, s.bioLv || 0)), condText: '进入投资阶段',
+    cond: s => s.phase >= 2, effect: s => { s.bioLv = (s.bioLv || 0) + 1; s.bioMult = (s.bioMult || 1) * 1.3; } },
   // —— 阶段三：太空 ——
   { id: 't1', phase: 3, name: '自复制协议', desc: '复制速率基础值 0.06%/s → 0.12%/s。', ops: 50000, condText: '探测器 ≥ 50',
     cond: s => s.probes >= 50, effect: s => { s.repBase = 0.0012; } },
@@ -1010,12 +1056,14 @@ const PROJECTS = [
 ];
 
 /* ---- 项目执行 ---- */
+/* v6.4：项目消耗支持函数形式（如合成生物学按等级递增），统一解析 */
+function projCreativity(p, s) { return typeof p.creativity === 'function' ? p.creativity(s) : p.creativity; }
 function runProject(s, id) {
   const p = PROJECTS.find(x => x.id === id);
   if (!p || (!p.repeatable && s.projectsDone.includes(id)) || !p.cond(s)) return false;
   if (p.ops && s.ops < p.ops) return false;
   if (p.clips && s.clips < p.clips) return false;
-  if (p.creativity && s.creativity < p.creativity) return false;
+  if (p.creativity && s.creativity < projCreativity(p, s)) return false;
   if (p.cost) {
     const pool = p.pool === 'capital' ? s.capital : s.funds;
     if (pool < p.cost(s)) return false;
@@ -1023,7 +1071,7 @@ function runProject(s, id) {
   }
   if (p.ops) s.ops -= p.ops;
   if (p.clips) s.clips -= p.clips;
-  if (p.creativity) s.creativity -= p.creativity;
+  if (p.creativity) s.creativity -= projCreativity(p, s);
   if (!p.repeatable) s.projectsDone.push(id);
   p.effect(s);
   if (p.trust) { s.trust += p.trust; s.trustEver += p.trust; }
@@ -1160,6 +1208,13 @@ function tick(s, dt) {
     const dug = Math.min(s.availMatter, hr);
     s.availMatter -= dug;
     s.stockMatter += dug;
+    /* v6.4：地球物质挖空后，太空阶段用深空物质按同等速率补足缺口，物质永不断供。
+       只在 dug < hr（地球不够挖）且 phase≥3 时触发；深空物质按 1:1 转拨。 */
+    if (dug < hr && s.phase >= 3 && s.spaceMatter > 0) {
+      const recycled = Math.min(s.spaceMatter, hr - dug);
+      s.spaceMatter -= recycled;
+      s.stockMatter += recycled;
+    }
     /* v5.8：boredom 原要求「挖空地球」(availMatter<=0)，实测需连续开采约 10 天游戏时长，
        绝大多数玩家在正常通关流程里根本触发不了，导致「娱乐集群」项目永远显示「需要集群无聊中」
        却无从下手。放宽为「地球物质降至初始的 50%」（与 a23 星球粉碎者成就同一门槛），
@@ -1529,7 +1584,7 @@ function renderStats() {
 }
 
 /* 信任花费按钮（动态） */
-const TRUST_ORDER = ['processor', 'memory', 'creativity', 'quantum', 'photonic', 'qauto', 'overclock', 'hands'];
+const TRUST_ORDER = ['processor', 'memory', 'creativity', 'quantum', 'photonic', 'qauto', 'overclock', 'hands', 'factoryOpt', 'droneOpt'];
 function renderTrustSpend() {
   const box = $('trustSpendBox');
   // 已满的放最后并置灰，可购买的排前面
@@ -1537,7 +1592,8 @@ function renderTrustSpend() {
   setHTML(box, order.map(k => {
     const a = TRUST_ACTIONS[k];
     const maxed = a.max(S);
-    const locked = (k === 'photonic' && !S.quantumOn) || (k === 'qauto' && !S.quantumOn) || (k === 'creativity' && S.processors < 1) || (k === 'quantum' && !S.creativityOn);
+    // v6.4：前置条件统一走 a.req（与 spendTrust 一致），新增生产端科技才能正确显示锁定态
+    const locked = a.req ? !a.req(S) : false;
     const c = a.cost(S);
     return `<div class="row" ${maxed ? 'style="opacity:.45;"' : ''}><span class="k">${a.name} · ${a.desc}</span>
       <button class="act" data-tk="${k}" ${maxed || locked || S.trust < c ? 'disabled' : ''}>${maxed ? '已满' : c + ' 信任'}</button></div>`;
@@ -1817,7 +1873,7 @@ function costText(p) {
   const parts = [];
   if (p.ops) parts.push('ops ' + fmt(p.ops));
   if (p.clips) parts.push('回形针 ' + fmt(p.clips));
-  if (p.creativity) parts.push('创造力 ' + fmt(p.creativity));
+  if (p.creativity) parts.push('创造力 ' + fmt(projCreativity(p, S)));
   if (p.cost) parts.push((p.pool === 'capital' ? '资本 ' : '资金 ') + fmt(p.cost(S)));
   return parts.join(' · ') || '免费';
 }
@@ -1826,7 +1882,7 @@ function renderProjects(listEl, ps) {
     let can = true;
     if (p.ops && S.ops < p.ops) can = false;
     if (p.clips && S.clips < p.clips) can = false;
-    if (p.creativity && S.creativity < p.creativity) can = false;
+    if (p.creativity && S.creativity < projCreativity(p, S)) can = false;
     if (p.cost) {
       const pool = p.pool === 'capital' ? S.capital : S.funds;
       if (pool < p.cost(S)) can = false;
@@ -1836,14 +1892,14 @@ function renderProjects(listEl, ps) {
     const lack = [];
     if (p.ops && S.ops < p.ops) lack.push('ops 差 ' + fmt(p.ops - S.ops));
     if (p.clips && S.clips < p.clips) lack.push('回形针差 ' + fmt(p.clips - S.clips));
-    if (p.creativity && S.creativity < p.creativity) lack.push('创造力差 ' + fmt(p.creativity - S.creativity));
+    if (p.creativity && S.creativity < projCreativity(p, S)) lack.push('创造力差 ' + fmt(projCreativity(p, S) - S.creativity));
     if (p.cost) {
       const pool = p.pool === 'capital' ? S.capital : (S.phase >= 2 ? S.capital : S.funds);
       const c = p.cost(S);
       if (pool < c) lack.push((p.pool === 'capital' ? '资本' : (S.phase >= 2 ? '资本' : '资金')) + '差 ' + fmt(c - pool));
     }
     return `<div class="proj" ${stale ? 'style="opacity:.5;"' : ''}>
-      <div class="pname">${p.name}${p.repeatable ? ' ×' + S.megaCostN : ''}${stale ? '（前阶段遗留）' : ''}</div>
+      <div class="pname">${p.name}${p.repeatable ? ' ×' + (p.countKey ? (S[p.countKey] || 0) : S.megaCostN) : ''}${stale ? '（前阶段遗留）' : ''}</div>
       <div class="pdesc">${p.desc}</div>
       <div class="pmeta">${costText(p)} ${p.trust ? ' · 信任 +' + p.trust : ''}
         <button class="act" data-p="${p.id}" ${can ? '' : 'disabled'}>执行</button></div>
@@ -2188,8 +2244,8 @@ function render() {
     mk_rival: '<b>对手份额</b><br>竞争对手抢占的市场比例，份额越高你的销量越低。买断竞争对手后份额清零；买断后营销仍可继续提升需求。',
     // v6.2 补全缺失资源说明
     deepMatter: '<b>深空物质</b><br>探索宇宙时由探测器持续采集的太空资源（探索满后仍在采集）。来源：探索推进 + 探测器深空采集 + 清剿漂流者夺回。<br>用途：① 少数太空事件选项会消耗它；② <b>轮回时按累计量折算宇宙印记</b>（局外成长点，每 100 倍数量级 +1）；③ 局外「深空后勤」升级可提升采集速度。',
-    earthMatter: '<b>可用物质（地球）</b><br>地球尚存的原始矿藏总量。采集无人机把它挖成「已采物质」库存，越挖越少，降至 50% 会触发「集群无聊」（解锁娱乐集群的前提）。',
-    stockMatter: '<b>已采物质库存</b><br>采集无人机挖出的物质存这里，是制造厂与线材无人机的原料。制造厂同时消耗物质与资本产回形针。',
+    earthMatter: '<b>可用物质（地球）</b><br>地球尚存的原始矿藏总量。采集无人机把它挖成「已采物质」库存，越挖越少，降至 50% 会触发「集群无聊」（解锁娱乐集群的前提）。<br><b>挖空后不会断供</b>：进入太空后会自动用深空物质按同等速率补足（见下方反哺提示）。',
+    stockMatter: '<b>已采物质库存</b><br>采集无人机挖出的物质存这里，是制造厂与线材无人机的原料。制造厂同时消耗物质与资本产回形针。地球挖空后由深空物质反哺续供。',
     spaceBoost: '<b>回形针产能加成（太空反哺）</b><br>进入太空后，原本「只涨不用」的四类资源按数量级折算成开关式产能倍率，让太空探索直接反哺回形针生产：<br>① 累计 qops 每数量级 +5%<br>② 当前 ops 每数量级 +3%<br>③ 深空物质每数量级 +4%<br>④ 探测器每数量级 +4%<br>四项加成相加，总倍率上限 ×3（防止数值膨胀）。都在太空页实时显示，无需额外操作，囤得越多产能越高。',
   };
   document.querySelectorAll('.tip').forEach(t => { t.querySelector('.tipbox').innerHTML = TIPS[t.dataset.tk]; });
@@ -2302,6 +2358,11 @@ function render() {
     $('batt100').disabled = $('battBtn').disabled; setTitle($('batt100'), `买 100 组（首组 ${fmt(ba)}，合计递增）`);
     $('availMatterVal').textContent = fmt(S.availMatter);
     $('stockMatterVal').textContent = fmt(S.stockMatter);
+    // v6.4：地球物质挖空后的深空反哺状态常显，让「物质永不断供」看得见
+    const rr = matterRecycleRate(S);
+    $('matterRecycleHint').textContent = rr > 0
+      ? `♻ 地球矿藏已挖空，太空阶段正把深空物质按 ${fmt(rr)}/s 转为已采物质，生产不会停摆。`
+      : (S.phase >= 3 ? '✅ 地球矿藏尚存；挖空后将自动用深空物质补足，物质永不断供。' : '');
     const hc = harvesterCost(S), wc = wireDroneCost(S), fc = factoryClips(S), fmc = factoryMatter(S);
     // 按钮只留设备名防换行；价格移入 title 悬浮
     $('harvBtn').textContent = '采集无人机（挖物质）';
