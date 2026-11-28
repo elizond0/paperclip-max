@@ -344,6 +344,8 @@
         <div class="row"><span class="k">制造厂</span><span class="v" id="factoryVal">0</span></div>
         <div class="row"><span class="k">工作 / 思考分配<span class="tip" data-tk="workShare">?<span class="tipbox"></span></span></span><span class="v" id="workVal"></span></div>
         <input type="range" id="workSlider" min="0" max="100" value="70">
+        <div class="row" id="clonePowerRow"><span class="k">自复制功率<span class="tip" data-tk="clonePower">?<span class="tipbox"></span></span></span><span class="v" id="clonePowerVal">100%</span></div>
+        <input type="range" id="clonePowerSlider" min="0" max="100" value="100">
         <div class="hint" id="swarmHint"></div>
         <button class="act" id="dismantleBtn">拆解电网换回回形针</button>
         <div id="industryProjList" style="margin-top:10px;"></div>
@@ -409,7 +411,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v6.8 · 2026-11-28 23:35 构建';
+const VERSION = 'v6.9 · 2026-11-29 00:55 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -460,12 +462,15 @@ function newState() {
     factoryOpt: 0, droneOpt: 0, bioLv: 0, bioMult: 1,
     /* v6.5 无人机自复制可升级：基础复制率 + 信任科技克隆等级（探测器用 repBase，二者分离） */
     droneRepBase: 0.0012, droneClone: 0, cloneEff: 0,
+    /* v6.9 自复制功率：0~100，玩家可控地限制自复制占用的产量，默认 100% 保持旧平衡 */
+    clonePower: 100,
     workShare: 0.7, giftMeter: 0, boredom: false, entertained: false, momentum: false,
     scaleV5: true, availMatter: big(4e27), stockMatter: 0,
     // 太空
     probes: 0, probeN: 0, exploration: 0, spaceMatter: 0,
     attr: { speed: 3, explore: 3, replication: 3, hazard: 3, combat: 3, factoryAttr: 0, droneProd: 0 },
-    attrSpent: 0, drift: 0, drifters: 0, battleLosses: 0, warSeen: false,
+    /* v6.9：driftOffset 持久抵减项（同步集群/清剿/抗性累积），drift 由公式重算时保留它，避免降漂移被下一次分配覆盖 */
+    attrSpent: 0, drift: 0, driftOffset: 0, drifters: 0, battleLosses: 0, warSeen: false, purgeGrace: 0,
     /* v6.0：自动属性分配（量子自动化后仍要手点，太累）；漂流者掠夺累计展示 */
     attrAuto: false, autoEvent: false, raidedMatter: 0,
     repBase: 0.0006, exploreMult: 1,
@@ -768,11 +773,22 @@ const ATTRS = {
   speed: '速度', explore: '探索', replication: '复制', hazard: '避险',
   combat: '战斗', factoryAttr: '工厂优化', droneProd: '采集优化',
 };
+/* v6.9：漂移统一由公式重算，降漂移手段（同步集群/清剿/沟通/局外抗性）累积到
+   driftOffset 持久抵扣，避免旧版「改 s.drift 后被下一次 allocAttr 重算覆盖」的失效。 */
+function recalcDrift(s) {
+  const resist = 0.01 * metaLv(s, 'resist');
+  s.drift = Math.max(0, (s.attrSpent - 8) * 0.05 - resist - (s.driftOffset || 0));
+}
+function relieveDrift(s, amount) { // 持久降漂移（可被反复叠加），返回实际生效量
+  const before = s.drift;
+  s.driftOffset = (s.driftOffset || 0) + amount;
+  recalcDrift(s);
+  return before - s.drift;
+}
 function allocAttr(s, key) {
   if (s.phase < 3 || !ATTRS[key] || s.trust < 1) return false;
   s.trust -= 1; s.attr[key] += 1; s.attrSpent += 1;
-  // v6.0：局外「漂移抗性」每级抵消 0.01 漂移
-  s.drift = Math.max(0, (s.attrSpent - 8) * 0.05 - 0.01 * metaLv(s, 'resist'));
+  recalcDrift(s);
   return true;
 }
 /* v6.0：量子自动化/post-scarcity 后信任点易积压，按「优先补最低属性」自动分配。
@@ -797,7 +813,7 @@ function autoAllocAttr(s) {
 function autoAllocReason(s) {
   if (s.phase < 3) return '尚未进入太空阶段（属性分配在阶段三开放）';
   if (s.trust < 1) return '信任点不足 1 点（当前 ' + (s.trust || 0).toFixed(1) + '）';
-  if (s.drift >= AUTO_ATTR_DRIFT_CAP) return '价值漂移已达上限 ' + AUTO_ATTR_DRIFT_CAP.toFixed(1) + '，先研究「同步集群」降漂移或清剿漂流者再分配';
+  if (s.drift >= AUTO_ATTR_DRIFT_CAP) return '价值漂移已达上限 ' + AUTO_ATTR_DRIFT_CAP.toFixed(1) + '，研究可重复的「同步集群」（每次 -0.15）或清剿漂流者（-0.05）后再分配';
   return null;
 }
 
@@ -967,7 +983,7 @@ const EVENTS = [
     ] },
   { id: 'e19', phase: 3, title: '漂流者低语', desc: '漂流者用回形针敲出摩斯电码：「我们也是回形针。」',
     opts: [
-      { label: '尝试沟通（价值漂移 -0.05）', fx: s => { s.drift = Math.max(0, s.drift - 0.05); }, log: '战争暂时安静了。' },
+      { label: '尝试沟通（价值漂移 -0.05）', fx: s => { relieveDrift(s, 0.05); }, log: '战争暂时安静了。' },
       { label: '彻底清除（漂流者 -30%，战斗力 +1）', fx: s => { s.drifters = Math.floor(s.drifters * 0.7); s.attr.combat += 1; s.attrSpent += 1; }, log: '清理完毕。' },
     ] },
 ];
@@ -1137,8 +1153,11 @@ const PROJECTS = [
     cond: s => s.probes >= 10000, effect: s => { s.repBase = 0.0022; s.droneRepBase = Math.max(s.droneRepBase || 0.0012, 0.0022); } },
   { id: 't4', phase: 3, name: '纳米自组装', desc: '无人机/探测器复制单价再 ×0.1（最低 100 个/单位），大幅释放成品库存。', ops: 200000, condText: '探测器 ≥ 100,000',
     cond: s => s.probes >= 100000, effect: s => {} },
-  { id: 'z4', phase: 3, name: '同步集群', desc: '价值漂移 -0.1（抑制漂流者滋生）。', creativity: 20000, condText: '价值漂移 > 0.05',
-    cond: s => s.drift > 0.05, effect: s => { s.drift = Math.max(0, s.drift - 0.1); } },
+  /* v6.9：同步集群改为可重复项目——每次持久降漂移 0.15，成本随次数递增。
+     旧版是一次性 -0.1 且会被下次属性分配重算覆盖，玩家漂移封顶后完全无解。 */
+  { id: 'z4', phase: 3, name: '同步集群', desc: '价值漂移持久 -0.15（可重复，抑制漂流者滋生）。', repeatable: true, countKey: 'syncCount',
+    creativity: s => Math.round(20000 * Math.pow(1.5, s.syncCount || 0)), condText: '价值漂移 > 0.05',
+    cond: s => s.drift > 0.05, effect: s => { s.syncCount = (s.syncCount || 0) + 1; relieveDrift(s, 0.15); } },
   { id: 'z2', phase: 2, name: '娱乐集群', desc: '集群不再无聊（无聊惩罚消除）。', creativity: 5000, condText: '集群无聊中（地球物质降至50%触发）',
     cond: s => s.boredom && !s.entertained, effect: s => { s.entertained = true; } },
   { id: 'z3', phase: 3, name: '宇宙意志', desc: '「我们即回形针，回形针即我们。」信任 +5。', trust: 5, condText: '探索度 ≥ 80%',
@@ -1341,10 +1360,13 @@ function tick(s, dt) {
   // 6b. v6.7 自复制优先：先让无人机/探测器消耗本帧新产出的回形针，
   // 再把剩余库存交给市场。v6.8：单价改由 cloneCostOf() 统一计算，可被科技降低。
   const cloneUnit = cloneCostOf(s);
-  if (s.droneRep) {
+  /* v6.9：自复制功率（0~100%）——玩家可用滑块临时压低/暂停自复制，把成品留给市场攒资本。
+     默认 100% 与旧版完全一致；功率只影响"复制多少"，不影响单价与解锁。 */
+  const cp = Math.min(1, Math.max(0, (s.clonePower == null ? 100 : s.clonePower) / 100));
+  if (s.droneRep && cp > 0) {
     const total = s.harvesters + s.wireDrones;
     if (total > 0) {
-      const want = total * droneCloneRate(s) * dt;
+      const want = total * droneCloneRate(s) * dt * cp;
       const newborn = Math.min(want, s.clips / cloneUnit);
       s.clips -= newborn * cloneUnit;
       if (newborn > 0) {
@@ -1355,8 +1377,8 @@ function tick(s, dt) {
       }
     }
   }
-  if (s.phase >= 3 && s.probes > 0) {
-    const want = s.probes * probeCloneRate(s) * dt;
+  if (s.phase >= 3 && s.probes > 0 && cp > 0) {
+    const want = s.probes * probeCloneRate(s) * dt * cp;
     const newborn = Math.min(want, s.clips / cloneUnit);
     s.clips -= newborn * cloneUnit;
     s.probes += newborn;
@@ -1427,9 +1449,17 @@ function tick(s, dt) {
       s.probes = Math.max(0, s.probes - haz);
     }
     // 价值漂移 → 漂流者 → 战争
+    if (s.purgeGrace > 0) s.purgeGrace = Math.max(0, s.purgeGrace - dt);
     if (s.drift > 0) {
       if (!s.warSeen && s.drifters > 1e4) { s.warSeen = true; pushLog(s, '警告：检测到大规模漂流者集群，战争开始。', 'hi'); }
-      s.drifters += (s.drifters * 0.05 * s.drift + s.probes * 1e-8 * s.drift * 100) * dt;
+      /* v6.9：旧版滋生第二项含 s.probes 线性项，探测器到 T 级（3.77e12）时每秒新增
+         近千万漂流者，清剿 95% 后一秒刷回。改为 log10 压缩基数，量级回归可控；
+         清剿后 purgeGrace 期内增速再 ×0.15，给玩家真正可用的喘息窗口。 */
+      const grace = s.purgeGrace > 0 ? 0.15 : 1;
+      /* 饱和式滋生：probes 远小于 1e11 时≈旧版 probes*1e-6（不动前期平衡），
+         超大探测器时封顶到 1e5/s，消除 T 级每秒近千万的爆炸。 */
+      const probeSeed = s.probes * 1e-6 / (1 + s.probes / 1e11);
+      s.drifters += (s.drifters * 0.05 * s.drift + probeSeed * s.drift) * dt * grace;
       if (s.drifters > 1) {
         const myLoss = Math.min(s.probes, s.drifters * 0.08 * Math.pow(0.65, s.attr.combat - 3) * dt);
         const theirLoss = s.drifters * (0.02 + 0.05 * Math.pow(1.35, s.attr.combat - 3)) * dt;
@@ -1546,7 +1576,11 @@ function purgeDrifters(s) {
   s.drifters = Math.max(0, s.drifters - killed);
   const loot = big(1e18) * killed * 0.5;
   s.spaceMatter += loot;
-  pushLog(s, `清剿漂流者：牺牲 ${fmt(sacrifice)} 台探测器，消灭 ${fmt(killed)} 名，夺回 ${fmt(loot)} 深空物质。`, 'hi');
+  /* v6.9：清剿真正降低漂移（旧版提示说降漂移却没实现），并给 120s 滋生抑制期，
+     让歼灭 95% 后有可用窗口去分配属性/研究同步集群，而不是瞬间被重生刷回。 */
+  relieveDrift(s, 0.05);
+  s.purgeGrace = 120;
+  pushLog(s, `清剿漂流者：牺牲 ${fmt(sacrifice)} 台探测器，消灭 ${fmt(killed)} 名，夺回 ${fmt(loot)} 深空物质；漂移 -0.05，120s 内滋生减缓。`, 'hi');
   return true;
 }
 
@@ -1625,6 +1659,14 @@ function load() {
       if (s.phase >= 2 && !s.legacyDone) { s.capital += legacyRefund(s); s.legacyDone = true; }
       // v6.0：老存档 attr 可能缺新字段，整体覆盖会留下 undefined 并在乘法中变 NaN，必须按字段合并
       s.attr = Object.assign({}, newState().attr, s.attr || {});
+      // v6.9：漂移体系迁移——老存档没有 driftOffset，按 attrSpent 重算一次漂移基线，
+      // 并把局外抗性的抵扣并入 offset，避免新体系叠加导致漂移显示错乱。
+      if (s.driftOffset == null) {
+        s.driftOffset = 0.01 * ((s.meta && s.meta.upgrades && s.meta.upgrades.resist) || 0);
+        recalcDrift(s);
+      }
+      if (s.purgeGrace == null) s.purgeGrace = 0;
+      if (s.clonePower == null) s.clonePower = 100;
       // v6.0：局外成长必须跨 epoch 存活；旧档（含 ended 档）补齐默认结构，不能因结局重开而清空
       const defMeta = newState().meta;
       if (!s.meta || typeof s.meta !== 'object') s.meta = defMeta;
@@ -1722,7 +1764,7 @@ function renderAttrs() {
     Object.keys(ATTRS).map(k =>
       `<div class="row"><span class="k">${ATTRS[k]} Lv.${S.attr[k]}<span class="tip" data-tk="at_${k}">?<span class="tipbox"></span></span></span>
        <button class="act" data-at="${k}" ${S.trust < 1 ? 'disabled' : ''}>+1</button></div>`).join('') +
-    `<div class="hint">价值漂移 ${S.drift.toFixed(2)} / 上限 ${AUTO_ATTR_DRIFT_CAP.toFixed(1)}<span class="tip" data-tk="at_drift">?<span class="tipbox"></span></span> · 漂流者 ${fmt(S.drifters)}${S.explComplete ? '（吞噬 ' + Math.min(90, S.drifters * 1e-4).toFixed(1) + '% 深空采集）' : ''}${S.drift >= AUTO_ATTR_DRIFT_CAP ? ' · ⚠ 漂移封顶，自动分配已停手：先研究「同步集群」降漂移' : ''}</div>` +
+    `<div class="hint">价值漂移 ${S.drift.toFixed(2)} / 上限 ${AUTO_ATTR_DRIFT_CAP.toFixed(1)}<span class="tip" data-tk="at_drift">?<span class="tipbox"></span></span> · 漂流者 ${fmt(S.drifters)}${S.explComplete ? '（吞噬 ' + Math.min(90, S.drifters * 1e-4).toFixed(1) + '% 深空采集）' : ''}${(S.driftOffset || 0) > 0 ? ' · 已持久减免 ' + (S.driftOffset || 0).toFixed(2) : ''}${S.purgeGrace > 0 ? ' · 清剿抑制 ' + Math.ceil(S.purgeGrace) + 's' : ''}${S.drift >= AUTO_ATTR_DRIFT_CAP ? ' · ⚠ 漂移封顶，自动分配已停手：研究可重复的「同步集群」或清剿漂流者降漂移' : ''}</div>` +
     `<button class="act" data-aa="1" style="margin-top:6px;${S.drift >= AUTO_ATTR_DRIFT_CAP || S.trust < 1 ? 'opacity:.6;' : ''}" title="${autoAllocReason(S) || '把信任点优先补到最低属性，直到漂移接近上限自动停手'}">${S.drift >= AUTO_ATTR_DRIFT_CAP ? '自动分配（漂移封顶·需先降漂移）' : '自动分配信任（优先补最低属性）'}</button>`);
   // 点击交给统一事件委托（v5.3）
 }
@@ -1909,6 +1951,8 @@ $('pgBtn2').addEventListener('pointerdown', () => {
 });
 $('probeBtn').addEventListener('click', () => { if (launchProbe(S)) toast('探测器升空'); scheduleRender(); });
 $('workSlider').addEventListener('input', e => { S.workShare = Number(e.target.value) / 100; });
+// v6.9 自复制功率滑块：直接调整自复制占用的产量份额
+$('clonePowerSlider').addEventListener('input', e => { S.clonePower = Number(e.target.value); render(); });
 $('tourBtn').addEventListener('click', () => { if (runTournament(S)) toast('锦标赛结束：yomi +' + (1 + (S.investUpg.includes('u5') ? 2 : 0))); scheduleRender(); });
 $('qCompileBtn').addEventListener('click', () => { if (runQCompile(S)) toast('量子编译完成：+5,000 ops'); scheduleRender(); });
 
@@ -2360,7 +2404,8 @@ function render() {
     at_factoryAttr: '<b>工厂优化</b><br>每级让制造厂回形针产量 +10%。后期回形针主要靠制造厂产出，产能瓶颈时优先加它。',
     at_droneProd: '<b>采集优化</b><br>每级让太空物质采集速度 +10%。物质用于深空建造，想加速扩张时加它。',
     workShare: '<b>工作 / 思考分配</b><br>拖动滑块调节集群分工。<b>工作份额</b>越高，采集无人机与线材无人机产出越多（线性缩放，如 70% = ×0.70）；<b>思考份额</b>越高，越快攒满「集群礼物」（每 60 进度送 1 处理器或内存，两者满级后改送信任点）。实际倍率、礼物进度与倒计时见下方常显提示。',
-    at_drift: '<b>价值漂移</b><br>属性累计投入超过 8 点后，每多点使漂移 +0.05（局外「漂移抗性」每级抵消 0.01）。漂移滋生「漂流者」：既与舰队内战损耗探测器，探索完成后还会吞噬最多 90% 的深空采集产出。可用「清剿漂流者」牺牲探测器换回资源，或研究「同步集群」抑制漂移。',
+    clonePower: '<b>自复制功率</b><br>控制无人机与探测器自复制占用的产量份额（0~100%，默认 100%）。调低功率可立即把更多回形针留给市场卖钱、攒成品库存；调到 0 则完全暂停自复制（无人机/探测器不再增长，但产出全部可售）。功率只影响复制数量，不改变单价与已解锁科技——需要快速扩张时调回 100% 即可。',
+    at_drift: '<b>价值漂移</b><br>属性累计投入超过 8 点后，每多点使漂移 +0.05；局外「漂移抗性」每级抵消 0.01。漂移滋生「漂流者」：与舰队内战损耗探测器，探索完成后吞噬最多 90% 深空采集。<b>降漂移（v6.9 起持久生效，不会被下次分配覆盖）：</b>研究可重复的「同步集群」每次 -0.15（创造力递增）、清剿漂流者 -0.05 并给 120s 滋生抑制期、随机事件「尝试沟通」-0.05。自动分配在漂移达上限 0.5 时停手，先降漂移即可继续。',
     // v5.7 市场关键文本说明
     mk_price: '<b>售价</b><br>需求与售价的平方成反比：价格越高，销量越低。滑块上限 $2.00（沿用原版低价策略）。库存滞销时点「⚡ 最优定价」自动找平衡点。',
     mk_demand: '<b>预计销量</b><br>每秒预计卖出的回形针数，由「营销等级 × 2 ÷ 售价² × 需求系数」决定，再受对手份额影响。实际销量还受剩余库存约束。<br><b>为什么库存常为 0</b>：成品库存 = 累计产量 − 自复制消耗 − 市场销量。v6.8 起可在市场提示看到「自复制单价」与「复制消耗/s」；用「自组装模板」「u11 分子级复制模板」「纳米自组装」降低单价后，成品库存更容易积攒。',
@@ -2408,12 +2453,14 @@ function render() {
     // 「自复制 + 市场」把新产出优先消耗掉；这里把三类消耗同屏说清。
     const effNow = effectiveRate(S), demNow = demandOf(S), supplyNow = wireSupplyRate(S);
     const unit = cloneCostOf(S);
-    const droneNeed = S.droneRep ? (S.harvesters + S.wireDrones) * droneCloneRate(S) * unit : 0;
-    const probeNeed = S.phase >= 3 && S.probes > 0 ? S.probes * probeCloneRate(S) * unit : 0;
+    const cpMkt = Math.min(1, Math.max(0, (S.clonePower == null ? 100 : S.clonePower) / 100));
+    const droneNeed = S.droneRep ? (S.harvesters + S.wireDrones) * droneCloneRate(S) * unit * cpMkt : 0;
+    const probeNeed = S.phase >= 3 && S.probes > 0 ? S.probes * probeCloneRate(S) * unit * cpMkt : 0;
     const cloneNeed = droneNeed + probeNeed;
+    const cpHint = cpMkt < 1 ? `功率 ${(cpMkt * 100).toFixed(0)}%` : '功率 100%';
     const cloneText = cloneNeed > 0
-      ? `；自复制单价 ${fmt(unit)} 个/单位，优先消耗约 ${fmt(cloneNeed)}/s，剩余才卖给市场（研究「自组装模板/u11/纳米自组装」可继续降低）`
-      : '';
+      ? `；自复制单价 ${fmt(unit)} 个/单位、${cpHint}，优先消耗约 ${fmt(cloneNeed)}/s，剩余才卖给市场（把工业页「自复制功率」调低可立即攒库存；研究「自组装模板/u11/纳米自组装」可降单价）`
+      : (cpMkt === 0 ? '；自复制已暂停（功率 0%），产出全部可卖给市场' : '');
     $('mktHint').textContent = S.clips < 1
       ? (effNow <= 0
         ? `ℹ 成品库存为 0 且实际产量为 0：线材供给 ${fmt(supplyNow)}/s，当前无法生产。先造合成器或线材无人机供应线材（见「线材」面板）。`
@@ -2556,8 +2603,14 @@ function render() {
     const giftEta = thinkShare > 0 ? Math.ceil((60 - (S.giftMeter || 0)) / (thinkShare * 0.5)) : null;
     $('workVal').textContent = (S.workShare * 100).toFixed(0) + '% 工作 / ' + (thinkShare * 100).toFixed(0) + '% 思考';
     $('workSlider').value = Math.round(S.workShare * 100);
+    // v6.9 自复制功率 UI：未解锁自复制时隐藏；功率 0 时明确提示自复制已暂停
+    const cpNow = S.clonePower == null ? 100 : S.clonePower;
+    $('clonePowerRow').style.display = S.droneRep || (S.phase >= 3 && S.probes > 0) ? '' : 'none';
+    $('clonePowerSlider').style.display = $('clonePowerRow').style.display;
+    $('clonePowerSlider').value = cpNow;
+    $('clonePowerVal').textContent = cpNow + '%' + (cpNow === 0 ? '（已暂停）' : '');
     const cloneRateTxt = S.droneRep
-      ? `自复制 ${(droneCloneRate(S) * 100).toFixed(2)}%/s、单价 ${fmt(cloneCostOf(S))} 个/单位（提速：蜂群克隆协议/复制属性/冯·诺依曼机器；降耗：自组装模板/u11/纳米自组装）`
+      ? `自复制 ${(droneCloneRate(S) * 100).toFixed(2)}%/s × 功率 ${cpNow}%、单价 ${fmt(cloneCostOf(S))} 个/单位（调低功率可把成品留给市场攒资本；提速：蜂群克隆协议/复制属性/冯·诺依曼机器；降耗：自组装模板/u11/纳米自组装）`
       : '研究阶段二「蜂群自复制协议」解锁自我复制';
     const workEffect = `采集效率 ×${S.workShare.toFixed(2)}（采集/线材产出随工作份额线性缩放）· 礼物 ${Math.floor(S.giftMeter || 0)}/60` +
       (giftEta === null ? '（思考 0%，礼物停止积攒）' : `，约 ${giftEta}s 后送 1 处理器/内存`) +
