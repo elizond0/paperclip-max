@@ -329,7 +329,7 @@
         </div>
         <div class="row" style="margin-top:8px;"><span class="k">无人机数量（采/线）</span><span class="v" id="droneVal"></span></div>
         <div class="row"><span class="k">制造厂</span><span class="v" id="factoryVal">0</span></div>
-        <div class="row"><span class="k">工作 / 思考分配</span><span class="v" id="workVal"></span></div>
+        <div class="row"><span class="k">工作 / 思考分配<span class="tip" data-tk="workShare">?<span class="tipbox"></span></span></span><span class="v" id="workVal"></span></div>
         <input type="range" id="workSlider" min="0" max="100" value="70">
         <div class="hint" id="swarmHint"></div>
         <button class="act" id="dismantleBtn">拆解电网换回回形针</button>
@@ -396,7 +396,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v6.4 · 2026-11-28 18:10 构建';
+const VERSION = 'v6.5 · 2026-11-28 18:30 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -444,6 +444,8 @@ function newState() {
     harvesters: 0, harvCostN: 0, wireDrones: 0, wdCostN: 0, factories: 0, facCostN: 0,
     /* v6.4 生产端科技等级：制造厂产能/无人机采物转化，每级叠乘，消耗信任点 */
     factoryOpt: 0, droneOpt: 0, bioLv: 0, bioMult: 1,
+    /* v6.5 无人机自复制可升级：基础复制率 + 信任科技克隆等级（探测器用 repBase，二者分离） */
+    droneRepBase: 0.0012, droneClone: 0,
     workShare: 0.7, giftMeter: 0, boredom: false, entertained: false, momentum: false,
     scaleV5: true, availMatter: big(4e27), stockMatter: 0,
     // 太空
@@ -584,6 +586,16 @@ function droneEff(s) {
    与太空反哺（spaceProdMult）叠乘，给后期「产能上不去」提供持续成长出口。 */
 function droneOptMult(s) { return Math.pow(1.4, s.droneOpt || 0) * (s.investUpg && s.investUpg.includes('u8') ? 2 : 1); }
 function factoryOptMult(s) { return Math.pow(1.5, s.factoryOpt || 0) * (s.investUpg && s.investUpg.includes('u7') ? 2 : 1); }
+/* v6.5：无人机自复制率统一计算（tick 与 UI 共用，杜绝显示与实际不一致）。
+   基础率 droneRepBase（阶段三 t1/t3 项目提升）× 信任科技「蜂群克隆」×1.5/级
+   × yomi 升级 u10(×2) × 复制属性(每级 +8%) × prestigeMult。 */
+function droneCloneRate(s) {
+  const base = s.droneRepBase || 0.0012;
+  const clone = Math.pow(1.5, s.droneClone || 0);
+  const yomi = s.investUpg && s.investUpg.includes('u10') ? 2 : 1;
+  const attr = 1 + (s.attr && s.attr.replication ? s.attr.replication - 3 : 0) * 0.08;
+  return base * clone * yomi * attr * (s.prestigeMult || 1);
+}
 function harvestRate(s) { return s.harvesters * big(1e20) * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult * droneOptMult(s); }
 function wireDroneRate(s) { return s.wireDrones * big(1e20) * s.workShare * droneEff(s) * powerFactor(s) * s.prestigeMult * droneOptMult(s); }
 function factoryRate(s) {
@@ -672,6 +684,9 @@ const TRUST_ACTIONS = {
     req: s => s.factoryUnlocked, effect: s => { s.factoryOpt += 1; } },
   droneOpt: { name: '蜂群增效', desc: '无人机采物/线材转化 ×1.4/级（可重复）', cost: s => 3 + s.droneOpt, max: s => s.droneOpt >= 8,
     req: s => s.swarmUnlocked, effect: s => { s.droneOpt += 1; } },
+  /* v6.5：无人机自复制提速——专治「能自复制但太慢」。与蜂群增效(产出)区分：这个管复制速度。 */
+  droneClone: { name: '蜂群克隆协议', desc: '无人机自复制率 ×1.5/级（可重复）', cost: s => 4 + s.droneClone, max: s => s.droneClone >= 8,
+    req: s => s.droneRep || s.swarmUnlocked, effect: s => { s.droneClone += 1; } },
   begwire: { name: '乞求线材', desc: '放下身段向人类讨要：+5000 线材', cost: () => 1, max: s => false,
     effect: s => { s.wire += 5000; } },
 };
@@ -713,6 +728,14 @@ function autoAllocAttr(s) {
     n++;
   }
   return n;
+}
+/* v6.5：自动分配「为什么点了没反应」——返回不可分配原因，供 UI 明确提示。
+   行为与 autoAllocAttr 严格一致（不改漂移停手逻辑），只补可读性。 */
+function autoAllocReason(s) {
+  if (s.phase < 3) return '尚未进入太空阶段（属性分配在阶段三开放）';
+  if (s.trust < 1) return '信任点不足 1 点（当前 ' + (s.trust || 0).toFixed(1) + '）';
+  if (s.drift >= AUTO_ATTR_DRIFT_CAP) return '价值漂移已达上限 ' + AUTO_ATTR_DRIFT_CAP.toFixed(1) + '，先研究「同步集群」降漂移或清剿漂流者再分配';
+  return null;
 }
 
 /* ---- 量子计算网格（4×4，点击 ↑ 态方块得 qops） ---- */
@@ -759,6 +782,7 @@ const INVEST_UPGRADES = [
   { id: 'u7', name: '精密制造协议', desc: '制造厂产能 ×2', yomi: 24 },
   { id: 'u8', name: '蜂群超频协议', desc: '无人机采物/线材转化 ×2', yomi: 30 },
   { id: 'u9', name: '全球市场开拓', desc: '市场需求 ×2（产能卖得更多）', yomi: 36 },
+  { id: 'u10', name: '克隆风暴协议', desc: '无人机自复制率 ×2', yomi: 42 },
 ];
 function buyInvestUpgrade(s, id) {
   const u = INVEST_UPGRADES.find(x => x.id === id);
@@ -1037,16 +1061,16 @@ const PROJECTS = [
     creativity: s => Math.round(5000 * Math.pow(1.6, s.bioLv || 0)), condText: '进入投资阶段',
     cond: s => s.phase >= 2, effect: s => { s.bioLv = (s.bioLv || 0) + 1; s.bioMult = (s.bioMult || 1) * 1.3; } },
   // —— 阶段三：太空 ——
-  { id: 't1', phase: 3, name: '自复制协议', desc: '复制速率基础值 0.06%/s → 0.12%/s。', ops: 50000, condText: '探测器 ≥ 50',
-    cond: s => s.probes >= 50, effect: s => { s.repBase = 0.0012; } },
+  { id: 't1', phase: 3, name: '自复制协议', desc: '探测器与无人机复制速率基础值 → 0.12%/s。', ops: 50000, condText: '探测器 ≥ 50',
+    cond: s => s.probes >= 50, effect: s => { s.repBase = 0.0012; s.droneRepBase = Math.max(s.droneRepBase || 0.0012, 0.0012); } },
   { id: 't2', phase: 3, name: '深空通信网络', desc: '探索速度 ×2。', ops: 80000, condText: '探测器 ≥ 1,000',
     cond: s => s.probes >= 1000, effect: s => { s.exploreMult *= 2; } },
   { id: 'z1', phase: 3, name: '快子驱动', desc: '探索速度 ×2。', ops: 100000, condText: '探索度 ≥ 50%',
     cond: s => s.exploration >= 50, effect: s => { s.exploreMult *= 2; } },
   { id: 'tq', phase: 3, name: '量子制导', desc: '深空导航量子化：探索速度随 qops 存量提升，最高 +50%（与量子编译取舍）。', ops: 100000, condText: '探索度 ≥ 10%',
     cond: s => s.exploration >= 10, effect: s => { s.qGuided = true; } },
-  { id: 't3', phase: 3, name: '冯·诺依曼机器', desc: '复制速率基础值 → 0.22%/s。', ops: 150000, condText: '探测器 ≥ 10,000',
-    cond: s => s.probes >= 10000, effect: s => { s.repBase = 0.0022; } },
+  { id: 't3', phase: 3, name: '冯·诺依曼机器', desc: '探测器与无人机复制速率基础值 → 0.22%/s。', ops: 150000, condText: '探测器 ≥ 10,000',
+    cond: s => s.probes >= 10000, effect: s => { s.repBase = 0.0022; s.droneRepBase = Math.max(s.droneRepBase || 0.0012, 0.0022); } },
   { id: 'z4', phase: 3, name: '同步集群', desc: '价值漂移 -0.1（抑制漂流者滋生）。', creativity: 20000, condText: '价值漂移 > 0.05',
     cond: s => s.drift > 0.05, effect: s => { s.drift = Math.max(0, s.drift - 0.1); } },
   { id: 'z2', phase: 2, name: '娱乐集群', desc: '集群不再无聊（无聊惩罚消除）。', creativity: 5000, condText: '集群无聊中（地球物质降至50%触发）',
@@ -1227,11 +1251,11 @@ function tick(s, dt) {
     s.stockMatter -= wr;
     s.wire += wr;
     // v6.1 蜂群自复制：按现有机群规模指数增长，每台消耗 5e6 回形针（与探测器复制同价）。
-    // 复制率 0.12%/s × (1 + 采集优化×0.1)，50 台起步约 30 分钟翻倍，5000 台约 3~4 小时可达。
+    // v6.5：复制率改为 droneCloneRate() 统一计算，可被科技/属性/yomi/阶段三项目升级，不再硬编码。
     if (s.droneRep) {
       const total = s.harvesters + s.wireDrones;
       if (total > 0) {
-        const want = total * 0.0012 * (1 + s.attr.droneProd * 0.1) * s.prestigeMult * dt;
+        const want = total * droneCloneRate(s) * dt;
         const afford = s.clips / 5e6;
         const newborn = Math.min(want, afford);
         s.clips -= newborn * 5e6;
@@ -1281,8 +1305,12 @@ function tick(s, dt) {
     s.giftMeter += (1 - s.workShare) * dt * 0.5;
     if (s.giftMeter >= 60) {
       s.giftMeter = 0;
-      if (Math.random() < 0.5 && s.processors < 12) { s.processors += 1; pushLog(s, '集群礼物：+1 处理器。'); }
-      else if (s.memory < 20) { s.memory += 1; pushLog(s, '集群礼物：+1 内存槽。'); }
+      // v6.5：礼物上限对齐 v6.4 升级上限（原硬编码 12/20 已过时，满级后礼物被静默清零白攒）
+      // 两档都满时礼物转为信任点，不再凭空蒸发。
+      const procCap = 20, memCap = 32;
+      if (Math.random() < 0.5 && s.processors < procCap) { s.processors += 1; pushLog(s, '集群礼物：+1 处理器。'); }
+      else if (s.memory < memCap) { s.memory += 1; pushLog(s, '集群礼物：+1 内存槽。'); }
+      else { s.trust += 1; pushLog(s, '集群礼物：处理器/内存已满，转为 +1 信任点。'); }
     }
   }
 
@@ -1584,7 +1612,7 @@ function renderStats() {
 }
 
 /* 信任花费按钮（动态） */
-const TRUST_ORDER = ['processor', 'memory', 'creativity', 'quantum', 'photonic', 'qauto', 'overclock', 'hands', 'factoryOpt', 'droneOpt'];
+const TRUST_ORDER = ['processor', 'memory', 'creativity', 'quantum', 'photonic', 'qauto', 'overclock', 'hands', 'factoryOpt', 'droneOpt', 'droneClone'];
 function renderTrustSpend() {
   const box = $('trustSpendBox');
   // 已满的放最后并置灰，可购买的排前面
@@ -1614,8 +1642,8 @@ function renderAttrs() {
     Object.keys(ATTRS).map(k =>
       `<div class="row"><span class="k">${ATTRS[k]} Lv.${S.attr[k]}<span class="tip" data-tk="at_${k}">?<span class="tipbox"></span></span></span>
        <button class="act" data-at="${k}" ${S.trust < 1 ? 'disabled' : ''}>+1</button></div>`).join('') +
-    `<div class="hint">价值漂移 ${S.drift.toFixed(2)}<span class="tip" data-tk="at_drift">?<span class="tipbox"></span></span> · 漂流者 ${fmt(S.drifters)}${S.explComplete ? '（吞噬 ' + Math.min(90, S.drifters * 1e-4).toFixed(1) + '% 深空采集）' : ''}</div>` +
-    `<button class="act" data-aa="1" ${S.trust < 1 ? 'disabled' : ''} style="margin-top:6px;">自动分配信任（优先补最低属性）</button>`);
+    `<div class="hint">价值漂移 ${S.drift.toFixed(2)} / 上限 ${AUTO_ATTR_DRIFT_CAP.toFixed(1)}<span class="tip" data-tk="at_drift">?<span class="tipbox"></span></span> · 漂流者 ${fmt(S.drifters)}${S.explComplete ? '（吞噬 ' + Math.min(90, S.drifters * 1e-4).toFixed(1) + '% 深空采集）' : ''}${S.drift >= AUTO_ATTR_DRIFT_CAP ? ' · ⚠ 漂移封顶，自动分配已停手：先研究「同步集群」降漂移' : ''}</div>` +
+    `<button class="act" data-aa="1" style="margin-top:6px;${S.drift >= AUTO_ATTR_DRIFT_CAP || S.trust < 1 ? 'opacity:.6;' : ''}" title="${autoAllocReason(S) || '把信任点优先补到最低属性，直到漂移接近上限自动停手'}">${S.drift >= AUTO_ATTR_DRIFT_CAP ? '自动分配（漂移封顶·需先降漂移）' : '自动分配信任（优先补最低属性）'}</button>`);
   // 点击交给统一事件委托（v5.3）
 }
 
@@ -1681,6 +1709,7 @@ function dispatchDelegated(d) {
   } else if (d.aa !== undefined) {
     const n = autoAllocAttr(S);
     if (n) toast('自动分配 ' + n + ' 点信任');
+    else toast(autoAllocReason(S) || '暂无可分配的信任点');
     scheduleRender();
   }
 }
@@ -2232,11 +2261,12 @@ function render() {
     // v5.7 探测器属性说明（阶段三，每点 1 信任）
     at_speed: '<b>速度</b><br>提高深空探索速率：每级让探索速度与「探索」的乘积额外 +0.1 系数（基础 0.5）。想更快推进探索度，速度与探索一起加最有效。',
     at_explore: '<b>探索</b><br>直接乘算探测器探索速率，每级 +1 倍率。探索度上涨可解锁深空项目、加快发现新区域。',
-    at_replication: '<b>复制</b><br>提高探测器自我复制率：每级 +0.004 基础复制率，探测器数量增长更快。预算紧张时优先加它扩大规模。',
+    at_replication: '<b>复制</b><br>提高自我复制率：探测器每级 +0.004 基础复制率；<b>无人机自复制率每级 +8%</b>（v6.5）。预算紧张时优先加它扩大规模。',
     at_hazard: '<b>避险</b><br>降低太空灾害造成的探测器损失：每级使灾害损失 ×0.6（3 级为基准）。漂流者战争、陨石带等事件里能显著减少损失。',
     at_combat: '<b>战斗</b><br>漂流者战争属性：每级使己方探测器损失 ×0.65、对漂流者伤害 ×1.35（3 级为基准）。战争频繁时优先加。',
     at_factoryAttr: '<b>工厂优化</b><br>每级让制造厂回形针产量 +10%。后期回形针主要靠制造厂产出，产能瓶颈时优先加它。',
     at_droneProd: '<b>采集优化</b><br>每级让太空物质采集速度 +10%。物质用于深空建造，想加速扩张时加它。',
+    workShare: '<b>工作 / 思考分配</b><br>拖动滑块调节集群分工。<b>工作份额</b>越高，采集无人机与线材无人机产出越多（线性缩放，如 70% = ×0.70）；<b>思考份额</b>越高，越快攒满「集群礼物」（每 60 进度送 1 处理器或内存，两者满级后改送信任点）。实际倍率、礼物进度与倒计时见下方常显提示。',
     at_drift: '<b>价值漂移</b><br>属性累计投入超过 8 点后，每多点使漂移 +0.05（局外「漂移抗性」每级抵消 0.01）。漂移滋生「漂流者」：既与舰队内战损耗探测器，探索完成后还会吞噬最多 90% 的深空采集产出。可用「清剿漂流者」牺牲探测器换回资源，或研究「同步集群」抑制漂移。',
     // v5.7 市场关键文本说明
     mk_price: '<b>售价</b><br>需求与售价的平方成反比：价格越高，销量越低。滑块上限 $2.00（沿用原版低价策略）。库存滞销时点「⚡ 最优定价」自动找平衡点。',
@@ -2381,13 +2411,20 @@ function render() {
     $('fac10').disabled = $('factoryBtn').disabled; setTitle($('fac10'), `买 10 座（首座 ${fmt(fc)} 资本 + ${fmt(fmc)} 物质，合计递增）`);
     $('fac100').disabled = $('factoryBtn').disabled; setTitle($('fac100'), `买 100 座（首座 ${fmt(fc)} + ${fmt(fmc)} 物质，合计递增）`);
     $('droneVal').textContent = Math.floor(S.harvesters) + ' / ' + Math.floor(S.wireDrones)
-      + (S.droneRep ? `（自复制 +${fmt((S.harvesters + S.wireDrones) * 0.0012 * (1 + S.attr.droneProd * 0.1) * S.prestigeMult)}/s）` : '');
+      + (S.droneRep ? `（自复制 +${fmt((S.harvesters + S.wireDrones) * droneCloneRate(S))}/s · 基础率 ${(droneCloneRate(S) * 100).toFixed(2)}%/s）` : '');
     $('factoryVal').textContent = fmt(S.factories) + '（' + fmt(factoryRate(S)) + ' 回形针/s）';
-    $('workVal').textContent = (S.workShare * 100).toFixed(0) + '% / ' + ((1 - S.workShare) * 100).toFixed(0) + '%';
+    // v6.5：工作/思考分配「看得见的实际作用」——显示采集倍率、礼物进度与下次礼物倒计时
+    const thinkShare = 1 - S.workShare;
+    const giftEta = thinkShare > 0 ? Math.ceil((60 - (S.giftMeter || 0)) / (thinkShare * 0.5)) : null;
+    $('workVal').textContent = (S.workShare * 100).toFixed(0) + '% 工作 / ' + (thinkShare * 100).toFixed(0) + '% 思考';
     $('workSlider').value = Math.round(S.workShare * 100);
-    $('swarmHint').textContent = S.boredom
-      ? (S.entertained ? '集群已获得娱乐分配，恢复正常效率。' : '⚠ 集群无聊中：产出 -70%。研究「娱乐集群」解决。')
-      : '思考份额积攒「集群礼物」（处理器/内存）；工作份额决定采集效率。地球物质降至 50% 会进入「集群无聊中」（解锁娱乐集群的前提）。';
+    const cloneRateTxt = S.droneRep ? `自复制 ${(droneCloneRate(S) * 100).toFixed(2)}%/s（信任「蜂群克隆协议」×1.5/级、复制属性、冯·诺依曼机器均可提速）` : '研究阶段二「蜂群自复制协议」解锁自我复制';
+    const workEffect = `采集效率 ×${S.workShare.toFixed(2)}（采集/线材产出随工作份额线性缩放）· 礼物 ${Math.floor(S.giftMeter || 0)}/60` +
+      (giftEta === null ? '（思考 0%，礼物停止积攒）' : `，约 ${giftEta}s 后送 1 处理器/内存`) +
+      (S.processors >= 20 && S.memory >= 32 ? '（已满，礼物改送信任点）' : '');
+    $('swarmHint').textContent = (S.boredom
+      ? (S.entertained ? '集群已获得娱乐分配，恢复正常效率。' : '⚠ 集群无聊中：产出 -70%。研究「娱乐集群」解决。') + ' '
+      : '') + workEffect + '。' + cloneRateTxt + '。';
     $('dismantleBtn').style.display = S.explComplete ? '' : 'none';
     renderProjects($('industryProjList'), visibleProjects().filter(p => p.phase === 2 && (p.id.startsWith('pw') || p.id.startsWith('sw') || p.id === 'z2' || p.id === 'eSwarm')));
   }
