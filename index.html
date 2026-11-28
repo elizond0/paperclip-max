@@ -349,7 +349,8 @@
       <div class="tabpane" id="pane-meta">
         <h2>传承 · 局外成长</h2>
         <div class="row"><span class="k">宇宙印记</span><span class="v" id="metaMarks">0</span></div>
-        <div class="hint">印记每次轮回结算（累计制造 + 成就 + 探索完成），永久保留。升级效果从下一轮生效。</div>
+        <div class="hint">印记每次轮回结算（累计制造 + 成就 + 探索完成 + 后期资源折算），永久保留。升级效果从下一轮生效。</div>
+        <div id="legacyBox" style="margin-top:6px;"></div>
         <div id="metaList" style="margin-top:10px;"></div>
         <h2 style="margin-top:14px;">生涯统计</h2>
         <div id="careerStats"></div>
@@ -386,7 +387,7 @@
 /*LOGIC-START*/
 /* ============ 游戏数值与逻辑（纯函数段，可脱离 DOM 测试） ============ */
 const SAVE_KEY = 'paperclip-max-v3';
-const VERSION = 'v6.0 · 2026-11-28 15:52 构建';
+const VERSION = 'v6.1 · 2026-11-28 16:30 构建';
 const SUF = ['', 'K', 'M', 'B', 'T', 'Qa（千兆）', 'Qi（百京）', 'Sx（十垓）', 'Sp（一秭）', 'Oc（十秭）', 'No（百秭）', 'Dc（千秭）'];
 
 /* 数值缩放：v5.0 起把「物质/太空/无人机」等大数子系统统一缩小 1e6 倍，
@@ -410,7 +411,7 @@ function newState() {
     phase: 1, ended: false, ending: '', explComplete: false,
     runs: 0, prestigeMult: 1,
     /* v6.0 局外成长：跨轮次保留的数据。doPrestige 复制它，load 的 ended 分支也保留。 */
-    meta: { marks: 0, upgrades: { startCapital: 0, output: 0, probe: 0, trust: 0, resist: 0 }, lifetimeClips: 0 },
+    meta: { marks: 0, upgrades: { startCapital: 0, output: 0, probe: 0, trust: 0, resist: 0, quantum: 0, matter: 0, yomi: 0, creativity: 0 }, lifetimeClips: 0 },
     time: 0,
     clips: 0, totalClips: 0, totalSold: 0, totalClicks: 0, crits: 0, critChance: 0.02,
     wire: 100, wireMult: 1, wireBought: 0, autoWire: false, autoWirePref: true, bailoutOnce: false,
@@ -428,7 +429,7 @@ function newState() {
     megas: 0, megaCostN: 0, megaMult: 1,
     rivalShare: 0, rivalGone: false,
     // 工业 / 电力 / 无人机
-    swarmUnlocked: false, powerUnlocked: false, factoryUnlocked: false,
+    swarmUnlocked: false, powerUnlocked: false, factoryUnlocked: false, droneRep: false,
     solarFarms: 0, solarCostN: 0, batteries: 0, battCostN: 0, battCapMult: 1,
     mwStored: 0, mwBanked: 0,
     harvesters: 0, harvCostN: 0, wireDrones: 0, wdCostN: 0, factories: 0, facCostN: 0,
@@ -488,7 +489,9 @@ function gainMoney(s, amt) { if (s.phase >= 2) s.capital += amt; else s.funds +=
 function clipperCost(s) { return 10 * Math.pow(s.clipperGrowth, s.clippers); }
 function mktCost(s) { return 100 * Math.pow(1.8, s.mkt - 1); }
 function synthCost(s) { return 5000 * Math.pow(1.25, s.synthCostN); }
-function megaCost(s) { return 20000 * Math.pow(1.45, s.megaCostN); }
+/* v6.1：u4「半导体路线图」承诺 1.45→1.32，旧版 megaCost 硬编码 1.45 使该科技完全无效。
+   改为读取 megaGrowth(s)，买下 u4 后立即降低后续超级剪裁机涨价速度。 */
+function megaCost(s) { return 20000 * Math.pow(megaGrowth(s), s.megaCostN); }
 function solarCost(s) { return 5e6 * Math.pow(1.6, s.solarCostN); }
 function batteryCost(s) { return 2e7 * Math.pow(1.5, s.battCostN); }
 /* v5.8：原 1.12 指数增长叠加 CAP_DAMP=1e10 后资本转线性增长，第 60 台起攒钱时间指数拉长
@@ -549,9 +552,13 @@ function autoCollectQ(s) {
 function runQCompile(s) {
   if (!s.qCompile || s.qops < 2000) return false;
   const opsMax = 5000 + s.memory * 10000;
-  if (s.ops + 5000 > opsMax) return false;
   s.qops -= 2000;
-  s.ops += 5000;
+  // v6.1：ops 满仓时旧版直接返回 false，导致后期 qops 只涨无用。
+  // 改为溢出自动转创造力（2,000 qops → 1,500 创造力），让量子线全程有出口。
+  if (s.ops + 5000 > opsMax) {
+    s.creativity += (s.creativityOn ? 1500 : 0);
+    s.ops = opsMax;
+  } else s.ops += 5000;
   return true;
 }
 
@@ -598,12 +605,16 @@ function allocAttr(s, key) {
   s.drift = Math.max(0, (s.attrSpent - 8) * 0.05 - 0.01 * metaLv(s, 'resist'));
   return true;
 }
-/* v6.0：量子自动化/post-scarcity 后信任点易积压，按「优先补最低属性」自动分配 */
+/* v6.0：量子自动化/post-scarcity 后信任点易积压，按「优先补最低属性」自动分配。
+   v6.1：漂移硬阈值——每点属性 +0.05 漂移，无脑自动分配会把漂移推到 5+，
+   滋生海量漂流者吞噬 90% 深空采集。达到 0.5 时自动停手，让玩家先做「同步集群」或清剿。 */
+const AUTO_ATTR_DRIFT_CAP = 0.5;
 function autoAllocAttr(s) {
   if (s.phase < 3 || s.trust < 1) return 0;
   const keys = Object.keys(ATTRS);
   let n = 0;
   while (s.trust >= 1 && n < 1000) {
+    if (s.drift >= AUTO_ATTR_DRIFT_CAP) break; // 漂移到顶立即停止，不再制造更多漂流者
     const min = Math.min.apply(null, keys.map(k => s.attr[k]));
     const k = keys.find(x => s.attr[x] === min);
     if (!allocAttr(s, k)) break;
@@ -657,7 +668,7 @@ function buyInvestUpgrade(s, id) {
   if (!u || s.investUpg.includes(id) || s.yomi < u.yomi) return false;
   s.yomi -= u.yomi;
   s.investUpg.push(id);
-  if (id === 'u4') s._megaGrowth = 1.32;
+  // v6.1：u4 生效改由 megaCost→megaGrowth 动态读取，删除此处无效的国际字段
   return true;
 }
 function megaGrowth(s) { return s.investUpg.includes('u4') ? 1.32 : 1.45; }
@@ -900,6 +911,13 @@ const PROJECTS = [
     cond: s => s.capital >= 8000, effect: s => { s.growthBonus = (s.growthBonus || 0) + 0.01; } },
   { id: 'sw2', phase: 2, name: '自主制造厂', desc: '解锁制造厂：吃物质+线材+电，海量产回形针（资本+物质采购）。', ops: 60000, condText: '解锁集群技术',
     cond: s => s.swarmUnlocked, effect: s => { s.factoryUnlocked = true; } },
+  /* v6.1：无人机 5000 台成就在 1.08^N 成本下需 4.6e159 年，数学上不可能达成。
+     新增「蜂群自复制」项目：解锁后无人机按数量比例自我复制（消耗回形针），
+     数量指数增长，成就从「不可能」变成「挂机数小时可达」，也让后期无人机线持续有意义。 */
+  { id: 'sw3', phase: 2, name: '蜂群自复制协议', desc: '解锁无人机自我复制：现有机群按数量持续复制新机（消耗回形针库存，受采集优化属性加成）。', ops: 80000, trust: 2,
+    condText: '解锁集群技术且无人机总数 ≥ 50',
+    cond: s => s.swarmUnlocked && (s.harvesters + s.wireDrones) >= 50,
+    effect: s => { s.droneRep = true; } },
   { id: 'y2', phase: 2, name: '市值管理', desc: '超级剪裁机产出 ×2。', cost: s => 100000, pool: 'capital', condText: '资本 ≥ 150,000',
     cond: s => s.capital >= 150000, effect: s => { s.megaMult *= 2; } },
   { id: 's3', phase: 2, name: '超级剪裁机', desc: '建造一台超级剪裁机（+2000 回形针/s）。可重复执行，价格递增。', repeatable: true, pool: 'capital', condText: '资本 ≥ 超级剪裁机造价',
@@ -983,6 +1001,11 @@ function seqCost(s, nKey, base, growth, n) { // 未来 n 台合计价（几何�
   for (let i = 0; i < n; i++) total += base * Math.pow(growth, N + i);
   return total;
 }
+function histCost(base, growth, n) { // 已购 n 台的原始总投入（从第 0 台起），用于拆解折算防套利
+  let total = 0;
+  for (let i = 0; i < n; i++) total += base * Math.pow(growth, i);
+  return total;
+}
 function buyN(s, buyFn, n) { // 尽量买满 n 台，钱不够就地停；返回实际买到台数
   let k = 0;
   while (k < n && buyFn(s)) k++;
@@ -994,11 +1017,16 @@ function launchProbe(s) {
   s.clips -= c; s.ops -= 1e4; s.probes += 1; s.probeN += 1; return true;
 }
 function dismantleGrid(s) {
-  if (!s.powerUnlocked || (s.solarFarms === 0 && s.batteries === 0)) return false;
-  const rec = s.solarFarms * solarCost(s) * 0.5 + s.batteries * batteryCost(s) * 0.5;
+  if (!s.explComplete || !s.powerUnlocked || (s.solarFarms === 0 && s.batteries === 0)) return false;
+  /* v6.1 反套利：旧版 rec = 台数 ×「当前单价」×0.5，而拆解把 solarCostN/battCostN 归零，
+     于是「买 N 台 → 拆解回笼 N×高价×0.5 → 按低价重新买回」可以反复刷回形针。
+     改为按历史投入的几何级数和折算（真实本金），且 40% 折价，拆解后不再有套利空间。 */
+  const rec = histCost(5e6, 1.6, s.solarFarms) * 0.4
+            + histCost(2e7, 1.5, s.batteries) * 0.4;
   s.solarFarms = 0; s.batteries = 0; s.solarCostN = 0; s.battCostN = 0;
+  s.mwStored = 0;
   s.clips += rec; s.totalClips += rec;
-  pushLog(s, '电网全部拆解，回笼 ' + fmt(rec) + ' 回形针。', 'hi');
+  pushLog(s, '电网全部拆解（按投入本金 40% 回笼），收回 ' + fmt(rec) + ' 回形针。', 'hi');
   return true;
 }
 
@@ -1087,6 +1115,23 @@ function tick(s, dt) {
     const wr = Math.min(wireDroneRate(s) * dt, s.stockMatter);
     s.stockMatter -= wr;
     s.wire += wr;
+    // v6.1 蜂群自复制：按现有机群规模指数增长，每台消耗 5e6 回形针（与探测器复制同价）。
+    // 复制率 0.12%/s × (1 + 采集优化×0.1)，50 台起步约 30 分钟翻倍，5000 台约 3~4 小时可达。
+    if (s.droneRep) {
+      const total = s.harvesters + s.wireDrones;
+      if (total > 0) {
+        const want = total * 0.0012 * (1 + s.attr.droneProd * 0.1) * s.prestigeMult * dt;
+        const afford = s.clips / 5e6;
+        const newborn = Math.min(want, afford);
+        s.clips -= newborn * 5e6;
+        if (newborn > 0) {
+          // 按现有采/线比例分配新增无人机，保持玩家的分配意图
+          const hShare = s.harvesters / total;
+          s.harvesters += newborn * hShare;
+          s.wireDrones += newborn * (1 - hShare);
+        }
+      }
+    }
   }
 
   // 6. 生产（吃线材；制造厂部分受供电率约束，剪裁机/超级机不受）
@@ -1146,7 +1191,7 @@ function tick(s, dt) {
     } else if (s.probes > 0) {
       // 漂流者吞噬一部分采集产出（每 1 万漂流者吞 1%，上限 90%），让战争代价可见
       const raidPct = Math.min(0.9, s.drifters * 1e-6);
-      const deepRate = s.probes * big(1e16) * (1 + s.attr.droneProd * 0.1) * s.prestigeMult * pm * (1 - raidPct);
+      const deepRate = s.probes * big(1e16) * (1 + s.attr.droneProd * 0.1) * s.prestigeMult * pm * metaMatterMult(s) * (1 - raidPct);
       const add = deepRate * dt;
       s.spaceMatter += add;
       s.raidedMatter = (s.raidedMatter || 0) + add * raidPct;
@@ -1218,11 +1263,18 @@ const META_UPGRADES = [
   { id: 'probe', name: '探测器效率', desc: '每级让探索与深空采集速度 +10%', base: 15 },
   { id: 'trust', name: '初始信任', desc: '每级让新轮次起始信任 +1', base: 20 },
   { id: 'resist', name: '漂移抗性', desc: '每级让价值漂移 -0.01（下限 0）', base: 25 },
+  /* v6.1 死资源出口：以下四项把后期只涨不用的量子操作点/深空物质/读心点/创造力
+     变成可兑换的印记来源，并给每级永久升级明确归属，形成「后期资源 → 局外成长」闭环。 */
+  { id: 'quantum', name: '量子传承', desc: '每级让新轮次起始 qops +2000（兑换溢出 qops 的永久出口）', base: 30 },
+  { id: 'matter', name: '深空后勤', desc: '每级让新轮次深空物质采集 +8%', base: 35 },
+  { id: 'yomi', name: '策略库继承', desc: '每级让新轮次起始 yomi +5（科技全习得后 yomi 仍有归宿）', base: 40 },
+  { id: 'creativity', name: '灵感继承', desc: '每级让新轮次起始创造力 +100', base: 45 },
 ];
 function metaLv(s, key) { return (s.meta && s.meta.upgrades && s.meta.upgrades[key]) || 0; }
 function metaOutputMult(s) { return 1 + 0.05 * metaLv(s, 'output'); }
 function metaProbeMult(s) { return 1 + 0.10 * metaLv(s, 'probe'); }
 function metaStartMult(s) { return 1 + 0.50 * metaLv(s, 'startCapital'); }
+function metaMatterMult(s) { return 1 + 0.08 * metaLv(s, 'matter'); }
 function metaCost(key, lv) {
   const u = META_UPGRADES.find(x => x.id === key);
   return u ? Math.round(u.base * Math.pow(1.8, lv)) : Infinity;
@@ -1235,9 +1287,27 @@ function buyMetaUpgrade(s, key) {
   s.meta.upgrades[key] = lv + 1;
   return true;
 }
+/* v6.1 死资源折算：后期失去用途的四类资源按对数压缩后计入轮回印记，
+   避免「攒了几十亿 qops / 深空物质却毫无意义」的挫败感。用 log10 压缩防止大额资源刷爆印记。 */
+function legacyMarkBreakdown(s) {
+  const lg = n => Math.max(0, Math.floor(Math.log10(Math.max(1, n || 0))));
+  return {
+    qops:      Math.floor(lg(s.qopsEver || 0) / 2),      // 1e4→2, 1e6→3
+    matter:    Math.floor(lg(s.spaceMatter || 0) / 2),   // 同上（big 缩放后）
+    yomi:      Math.floor((s.yomi || 0) / 25),          // 每 25 yomi → 1
+    creativity: Math.floor(lg(s.creativity || 0) / 2),   // 每 1e2 数量级 → 1
+    drones:    Math.floor((s.harvesters + s.wireDrones) / 500), // 每 500 台无人机 → 1
+  };
+}
+function legacyMarks(s) {
+  const b = legacyMarkBreakdown(s);
+  return b.qops + b.matter + b.yomi + b.creativity + b.drones;
+}
 function settleMarks(s) {
   const clips = Math.max(1, s.totalClips || 0);
-  const gain = Math.max(1, Math.floor(Math.log10(clips) * 2) + (s.ach ? s.ach.length : 0) + (s.explComplete ? 5 : 0));
+  const base = Math.max(1, Math.floor(Math.log10(clips) * 2) + (s.ach ? s.ach.length : 0) + (s.explComplete ? 5 : 0));
+  const legacy = legacyMarks(s);
+  const gain = base + legacy;
   if (!s.meta) s.meta = newState().meta;
   s.meta.lifetimeClips = (s.meta.lifetimeClips || 0) + clips;
   s.meta.marks = (s.meta.marks || 0) + gain;
@@ -1276,7 +1346,13 @@ function doPrestige(s) {
   fresh.trust = t0; fresh.trustEver = t0;
   fresh.funds = 10000 * fresh.runs * metaStartMult(s);
   fresh.wire = 5000 * fresh.runs * metaStartMult(s);
-  pushLog(fresh, '轮回 #' + fresh.runs + ' 开始。产出 ×' + fresh.prestigeMult.toFixed(1) + '，初始资金 ' + fmt(fresh.funds) + '。本轮结算宇宙印记 +' + gain + '。', 'hi');
+  // v6.1：死资源兑换的永久升级在下一轮生效
+  fresh.qops = 2000 * metaLv(s, 'quantum');
+  fresh.qopsEver = fresh.qops;
+  fresh.yomi = 5 * metaLv(s, 'yomi');
+  fresh.creativity = 100 * metaLv(s, 'creativity');
+  fresh.creativityOn = fresh.creativity > 0 || s.ach.includes('a12');
+  pushLog(fresh, '轮回 #' + fresh.runs + ' 开始。产出 ×' + fresh.prestigeMult.toFixed(1) + '，初始资金 ' + fmt(fresh.funds) + '。本轮结算宇宙印记 +' + gain + '（含死资源折算 +' + legacyMarks(s) + '）。', 'hi');
   return fresh;
 }
 
@@ -1410,6 +1486,7 @@ function renderTrustSpend() {
   const beg = $('begBtn');
   const begOn = S.phase === 1 && S.wire <= 200 && S.trust >= 1;
   beg.disabled = !begOn;
+  beg.style.display = S.phase === 1 ? '' : 'none'; // v6.1：阶段二后不再显示永久灰按钮
 }
 
 /* 属性分配（阶段三） */
@@ -1806,9 +1883,9 @@ function renderEnding() {
     // 轮回引导：明确告知保留项与下一轮加成
     const nextRuns = S.runs + 1;
     const nextMult = Math.pow(1.5, nextRuns) * metaOutputMult(S);
-    const gainPreview = Math.max(1, Math.floor(Math.log10(Math.max(1, S.totalClips)) * 2) + S.ach.length + 5);
+    const gainPreview = Math.max(1, Math.floor(Math.log10(Math.max(1, S.totalClips)) * 2) + S.ach.length + 5) + legacyMarks(S);
     const guide = `\n\n———— 关于轮回 ————\n`
-      + `本轮结算：宇宙印记 +${gainPreview}（累计制造 + 成就 + 探索完成）\n`
+      + `本轮结算：宇宙印记 +${gainPreview}（累计制造 + 成就 + 探索完成 + 后期资源折算 +${legacyMarks(S)}）\n`
       + `保留：${S.ach.length}/${ACHIEVEMENTS.length} 项成就 · 印记 ${S.meta.marks} · 已购永久升级 · 事件记录\n`
       + `重置：资金/资本、线材、设备、项目进度、地图（重新从制造阶段开始）\n`
       + `加成：全局产出 ×${nextMult.toFixed(2)}（轮回 ×${Math.pow(1.5, nextRuns).toFixed(2)} × 局外 ×${metaOutputMult(S).toFixed(2)}）\n`
@@ -1902,6 +1979,7 @@ const GATE_MAP = {
   s4: [['资本', 'capital', 300000, null]],
   y3: [['资本', 'capital', 500000, null], ['对手份额 %', s => s.rivalShare * 100, 2, null]],
   pw2: [['太阳能农场', 'solarFarms', 10, null]],
+  sw3: [['无人机总数', s => s.harvesters + s.wireDrones, 50, null]],
   t1: [['探测器', 'probes', 50, null]],
   t2: [['探测器', 'probes', 1000, null]],
   tq: [['探索度', 'exploration', 10, null]],
@@ -1959,6 +2037,11 @@ function renderGoals() {
 function renderMeta() {
   const m = S.meta || newState().meta;
   $('metaMarks').textContent = fmt(m.marks);
+  // v6.1 死资源折算预告：让玩家在轮回前就看到「攒了有用」
+  const lb = legacyMarkBreakdown(S);
+  setHTML($('legacyBox'),
+    `<div class="hint" style="margin:0 0 6px;">本轮可折算印记 <b style="color:var(--accent)">+${legacyMarks(S)}</b>（轮回时自动结算）</div>` +
+    `<div class="hint" style="margin:0;">qops ${fmt(S.qopsEver || 0)} → +${lb.qops} · 深空物质 ${fmt(S.spaceMatter || 0)} → +${lb.matter} · yomi ${fmt(S.yomi || 0)} → +${lb.yomi} · 创造力 ${fmt(S.creativity || 0)} → +${lb.creativity} · 无人机 ${fmt(S.harvesters + S.wireDrones)} → +${lb.drones}</div>`);
   setHTML($('metaList'), META_UPGRADES.map(u => {
     const lv = metaLv(S, u.id), cost = metaCost(u.id, lv);
     return `<div class="proj"><div class="pname">${u.name} Lv.${lv}</div><div class="pdesc">${u.desc}</div>
@@ -2019,8 +2102,8 @@ function render() {
       ? '<b>创造力</b><br>ops 满仓时溢出部分自动转为创造力。<br>用途：创意项目——「机器人之梦」（产出 ×1.5）、「哈德维格猜想」（需求 +25%）、太空阶段集群治理。'
       : '<b>创造力（未解锁）</b><br>花 2 信任研究「创造力协议」后开启：ops 满仓溢出自动积累，解锁创意项目。',
     qops: S.qCompile
-      ? '<b>qops（量子操作点）</b><br>来源：点击 ↑ 态方块 / 光子芯片被动 / 量子自动化。<br>用途：「量子编译」2,000 qops → 5,000 ops（按钮在上方）；太空阶段可研究「量子制导」换取探索 +50%。'
-      : '<b>qops（量子操作点）</b><br>来源：点击 ↑ 态方块（「量子自动化」可免手点）。<br>用途：解锁「量子编译器」项目后可换成 ops，太空阶段还有大用。',
+      ? '<b>qops（量子操作点）</b><br>来源：点击 ↑ 态方块 / 光子芯片被动 / 量子自动化。<br>用途：①「量子编译」2,000 qops → 5,000 ops（ops 满仓时改转 1,500 创造力，不再浪费）；② 太空「量子制导」探索 +50%；③ <b>轮回时按累计量折算宇宙印记</b>，后期不再无用。'
+      : '<b>qops（量子操作点）</b><br>来源：点击 ↑ 态方块（「量子自动化」可免手点）。<br>用途：解锁「量子编译器」项目后可换成 ops；<b>轮回时可折算印记</b>换永久成长。',
     // v5.7 探测器属性说明（阶段三，每点 1 信任）
     at_speed: '<b>速度</b><br>提高深空探索速率：每级让探索速度与「探索」的乘积额外 +0.1 系数（基础 0.5）。想更快推进探索度，速度与探索一起加最有效。',
     at_explore: '<b>探索</b><br>直接乘算探测器探索速率，每级 +1 倍率。探索度上涨可解锁深空项目、加快发现新区域。',
@@ -2040,8 +2123,9 @@ function render() {
   qcb.style.display = S.qCompile ? '' : 'none';
   if (S.qCompile) {
     const opsMax = 5000 + S.memory * 10000;
-    qcb.textContent = `量子编译（2,000 qops → 5,000 ops）`;
-    qcb.disabled = S.qops < 2000 || S.ops + 5000 > opsMax;
+    const qFull = S.ops + 5000 > opsMax;
+    qcb.textContent = qFull ? `量子编译（2,000 qops → 1,500 创造力）` : `量子编译（2,000 qops → 5,000 ops）`;
+    qcb.disabled = S.qops < 2000;
   }
 
   $('priceVal').textContent = S.price.toFixed(2);
@@ -2156,7 +2240,8 @@ function render() {
     $('wd100').disabled = $('wireDroneBtn').disabled; $('wd100').title = `买 100 台（首台 ${fmt(wc)}，合计递增）`;
     $('fac10').disabled = $('factoryBtn').disabled; $('fac10').title = `买 10 座（首座 ${fmt(fc)} 资本 + ${fmt(fmc)} 物质，合计递增）`;
     $('fac100').disabled = $('factoryBtn').disabled; $('fac100').title = `买 100 座（首座 ${fmt(fc)} + ${fmt(fmc)} 物质，合计递增）`;
-    $('droneVal').textContent = S.harvesters + ' / ' + S.wireDrones;
+    $('droneVal').textContent = Math.floor(S.harvesters) + ' / ' + Math.floor(S.wireDrones)
+      + (S.droneRep ? `（自复制 +${fmt((S.harvesters + S.wireDrones) * 0.0012 * (1 + S.attr.droneProd * 0.1) * S.prestigeMult)}/s）` : '');
     $('factoryVal').textContent = fmt(S.factories) + '（' + fmt(factoryRate(S)) + ' 回形针/s）';
     $('workVal').textContent = (S.workShare * 100).toFixed(0) + '% / ' + ((1 - S.workShare) * 100).toFixed(0) + '%';
     $('workSlider').value = Math.round(S.workShare * 100);
@@ -2180,7 +2265,7 @@ function render() {
       $('explBarText').textContent = pct.toFixed(1) + '% · 推进 ' + fmt(explRate) + '%/s · 剩余 ' + etaTxt;
     } else {
       // v6.0：探索完成后改为显示深空采集速率，不再显示无意义的「剩余 —」
-      const deepRate = S.probes * big(1e16) * (1 + S.attr.droneProd * 0.1) * S.prestigeMult * pm * (1 - raidPct);
+      const deepRate = S.probes * big(1e16) * (1 + S.attr.droneProd * 0.1) * S.prestigeMult * pm * metaMatterMult(S) * (1 - raidPct);
       $('explBarText').textContent = '100.0% · 已完成 · 深空采集 +' + fmt(deepRate) + '/s'
         + (raidPct > 0 ? '（漂流者吞噬 ' + (raidPct * 100).toFixed(1) + '%）' : '');
     }
